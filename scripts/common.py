@@ -115,7 +115,8 @@ def clip_period(df, months, as_of=None):
                      index=df.index)
     if as_of is not None:
         mask &= (df["작성일"].dt.date <= as_of)
-    return df[mask]
+    # 자른 뒤에 drop_split_offsets 가 상계 표시를 고쳐야 하므로 복사본을 준다.
+    return df[mask].copy()
 
 
 def deadline_for(year, month, deadline_day):
@@ -259,6 +260,8 @@ def match_offsets(df, cfg):
     짝을 못 찾은 마이너스는 취소가 아니라 환급·할인성으로 보고 순액에만 반영한다.
     """
     df["상계"] = ""
+    # 짝의 행 번호를 남겨둔다. 기간을 자른 뒤 한쪽만 남았는지 알려면 필요하다.
+    df["상계짝"] = pd.NA
     o = cfg["offset_matching"]
     pairs = 0
 
@@ -290,11 +293,41 @@ def match_offsets(df, cfg):
                     used.update({i, j})
                     df.loc[i, "상계"] = "취소분(상계)"
                     df.loc[j, "상계"] = "원본(상계됨)"
+                    df.loc[i, "상계짝"] = j
+                    df.loc[j, "상계짝"] = i
                     pairs += 1
                     break
             else:
                 df.loc[i, "상계"] = "환급·할인(순액반영)"
     return pairs
+
+
+def drop_split_offsets(df):
+    """
+    짝의 한쪽만 기간 안에 남은 상계 표시를 해제한다. 반환값은 해제한 행 수.
+
+    match_offsets 는 기간을 자르기 **전** 전체 데이터에서 짝을 맺는다. 그래야
+    전년 12월분이 다음 해 파일에서 취소된 경우도 잡힌다. 하지만 clip_period 뒤에는
+    짝의 한쪽만 남을 수 있고, 표시를 그대로 두면 두 가지가 조용히 틀린다.
+
+      1. 남은 '원본(상계됨)' 이 live_rows 에서 죽는다. 그게 그 달의 유일한 건이면
+         매트릭스가 정상 수취분을 '전액취소(0+노랑)' 로 오판한다.
+      2. validate 의 '취소분 개수 == 원본 개수' 검사가 항상 깨진다
+         (1월 실행에서 실제로 '취소분 0건 vs 원본 1건' FAIL 이 났다).
+
+    해제 표시에 '상계' 라는 글자를 쓰지 않는다. live_rows 가 부분일치로 거르므로
+    그 글자가 들어가면 해제해놓고도 여전히 죽은 건으로 센다.
+    """
+    if len(df) == 0 or "상계짝" not in df.columns:
+        return 0
+    inside = set(df.index)
+    n = 0
+    for i, mate in df["상계짝"].items():
+        if pd.isna(mate) or int(mate) in inside:
+            continue
+        df.loc[i, "상계"] = "짝이 기간 밖"
+        n += 1
+    return n
 
 
 def live_rows(g):
