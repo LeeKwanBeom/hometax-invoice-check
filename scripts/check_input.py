@@ -16,7 +16,8 @@ from datetime import date, timedelta
 import pandas as pd
 
 from common import (load_config, load_vendors, load_uploads, norm_biz, fmt_biz,
-                    biz_checksum_ok, month_range)
+                    biz_checksum_ok, month_range, month_label, clip_period,
+                    live_rows, match_offsets)
 
 OK, WARN, FAIL = "OK  ", "WARN", "FAIL"
 _results = []
@@ -40,9 +41,11 @@ def main():
     check_files(meta, df)
     check_receiver(df, cfg)
     check_continuity(df, as_of, cfg)
+    check_period_start(df, as_of)
     check_totals(df, meta)
     check_duplicates(df)
     check_vendors(vendors, df)
+    check_cycle(vendors, df, as_of, cfg)
 
     print(f"\n입력 검증 · 기준일 {as_of}\n" + "=" * 68)
     for lv, t, d in _results:
@@ -86,30 +89,98 @@ def check_continuity(df, as_of, cfg):
     파일들이 덮는 날짜 구간에 구멍이 있는지 본다.
     작성일자가 하루도 없는 '빈 달'이 중간에 있으면 파일 누락을 의심한다.
     """
-    year = as_of.year
-    cur = df[df["연"] == year]
+    want = month_range(as_of)
+    have = set(zip(df["연"], df["월"]))
+    cur = clip_period(df, want, as_of)
     if len(cur) == 0:
-        rec(FAIL, f"{year}년 작성분이 한 건도 없음", "다른 연도 파일을 올렸을 수 있다.")
+        rec(FAIL, "점검 기간 작성분이 한 건도 없음", "다른 연도 파일을 올렸을 수 있다.")
         return
 
-    months = set(cur["월"])
-    want = month_range(as_of)
-    gap = [m for m in want if m not in months]
     # 실행월은 아직 데이터가 없는 게 정상
-    gap = [m for m in gap if m != as_of.month]
+    gap = [ym for ym in want if ym not in have and ym != (as_of.year, as_of.month)]
 
     if gap:
-        rec(FAIL, f"{year}년 {', '.join(str(m) + '월' for m in gap)} 데이터가 통째로 없음",
+        rec(FAIL, f"{', '.join(month_label(ym, as_of) for ym in gap)} 데이터가 통째로 없음",
             "홈택스 파일 한 구간을 빼먹었을 가능성이 높다.\n"
             "그대로 진행하면 전 거래처가 해당 월 미수취로 잘못 나온다.\n"
             "정말 거래가 없던 달이라면 이 경고를 무시해도 된다.")
     else:
-        rec(OK, f"{year}년 1~{max(months)}월 연속 — 구간 누락 없음")
+        rec(OK, f"{month_label(want[0], as_of)}~{month_label(want[-1], as_of)} 연속 "
+                f"— 구간 누락 없음")
 
-    other = sorted(set(df["연"]) - {year})
+    other = sorted(ym for ym in have if ym not in set(want))
     if other:
-        rec(WARN, f"{year}년 외 작성분 포함: {other}",
-            "점검 기간(당해 1/1~오늘) 밖이라 집계에서 제외된다.")
+        rec(WARN, f"점검 기간 밖 작성분 포함: {len(other)}개 월",
+            ", ".join(f"{y}-{m:02d}" for y, m in other) +
+            "\n점검 기간 밖이라 집계에서 제외된다.")
+
+
+def check_period_start(df, as_of):
+    """
+    홈택스 파일이 정말 기간 처음부터 시작하는지.
+
+    1월 중순부터 받으면 1월 상반기가 통째로 빠지는데, '1월 데이터가 있다'는
+    이유로 구간 누락 검사를 통과해버린다. 1월에 실행할 때는 전년 12월분
+    (기한이 익년 1/10 이라 1월 초에 들어온다)이 있는지도 함께 본다.
+    """
+    want = month_range(as_of)
+    first_y, first_m = want[0]
+    inper = df[(df["연"] == first_y) & (df["월"] == first_m)]
+    if len(inper) == 0:
+        return  # 구간 누락 검사가 이미 다룬다
+    day = int(inper["작성일"].dt.day.min())
+    if day > 10:
+        rec(WARN, f"{month_label((first_y, first_m), as_of)} 작성분이 {day}일부터 시작",
+            "홈택스 조회 시작일을 늦게 잡아 앞부분이 빠졌을 수 있다.\n"
+            "기간은 점검 시작월 1일부터 받는다.")
+    else:
+        rec(OK, f"{month_label((first_y, first_m), as_of)} {day}일부터 — 시작 구간 정상")
+
+
+def check_cycle(vendors, df, as_of, cfg):
+    """
+    vendors.json 의 cycle 이 실제 수취 패턴과 어긋나는지 자동으로 본다.
+
+    손으로 적어둔 주기는 시간이 지나면 반드시 실제와 벌어진다. 어긋나면
+    '매월인데 비정기로 적혀 결번을 안 잡거나', 반대로 '비정기인데 매월로 적혀
+    매번 오탐'이 된다. 판정을 바꾸지는 않고 사람에게 확인만 요청한다.
+    """
+    if not vendors:
+        return
+    th = cfg["thresholds"]
+    want = month_range(as_of)
+    hits = []
+    for v in vendors:
+        sid = norm_biz(v["biz_no"])
+        g = df[df["공급자번호"] == sid]
+        got = sorted({ym for ym in zip(g["연"], g["월"]) if ym in set(want)})
+        n, run = len(got), _max_run(got)
+        cyc = v.get("cycle", "")
+        if cyc != "매월" and (n >= th["monthly_min_months"]
+                             or run >= th["monthly_min_months"] - 2):
+            hits.append(f"{v['name']} · '{cyc}' 로 등록 · 실제 {n}개월 수취"
+                        f"(최장 {run}개월 연속) → '매월' 검토")
+        elif cyc == "매월" and len(want) >= 4 and n <= th["sporadic_max_months"] \
+                and not v.get("until") and not v.get("since"):
+            hits.append(f"{v['name']} · '매월' 로 등록 · 실제 {n}개월 수취만"
+                        f" → '비정기' 또는 until 검토")
+    if hits:
+        rec(WARN, f"cycle 이 실제 패턴과 어긋나 보이는 거래처 {len(hits)}곳",
+            "\n".join(hits) + "\n판정에는 영향 없다. 맞으면 vendors.json 을 고친다.")
+    else:
+        rec(OK, "vendors.json 의 cycle 이 실제 수취 패턴과 어긋나지 않음")
+
+
+def _max_run(yms):
+    """(연,월) 목록에서 연속으로 이어진 최장 길이."""
+    if not yms:
+        return 0
+    seq = sorted(y * 12 + m for y, m in yms)
+    best = run = 1
+    for a, b in zip(seq, seq[1:]):
+        run = run + 1 if b == a + 1 else 1
+        best = max(best, run)
+    return best
 
 
 def check_totals(df, meta):
