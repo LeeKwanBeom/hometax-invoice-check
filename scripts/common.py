@@ -144,6 +144,23 @@ def is_in_grace(year, month, as_of, cfg):
     return as_of <= deadline_for(year, month, g["deadline_day"])
 
 
+def is_resolved(grade, status):
+    """
+    '해결' 인가. **등급과 상태 두 곳에 나뉘어 표기된다.**
+
+    직전 회차에 '확인 필요' 였다가 이번에 빠진 거래처는 두 경로로 들어온다.
+      1) 이번 회차에 아예 안 잡힘  → 새 행을 만들고 `등급 = 해결`
+      2) 이번 회차에 다른 등급으로 잡힘(거래 종료·단발 등)
+         → 행은 그대로 두고 `상태 = 해결` 만 붙인다 (build_report.apply_state)
+
+    한쪽만 세면 2번이 통째로 사라진다. 실제로 build_report 콘솔과 validate 가
+    나란히 '해결 0' 을 찍었고, 시트에는 `상태=해결` 이 2행 있었다.
+    산출물은 옳고 요약만 틀리는 형태라 검증기로도 안 걸렸다.
+    그래서 세는 규칙을 여기 한 곳에만 둔다.
+    """
+    return grade == "해결" or status == "해결"
+
+
 def vat_period_of(month, cfg):
     if not cfg["vat_period"]["enabled"]:
         return ""
