@@ -118,9 +118,16 @@ def grade_all(facts, as_of, cfg):
             continue
         monthly = f["cycle"] == "매월" or f["months_got"] >= th["monthly_min_months"]
 
+        # 수취 0건이어도 '기한이 지난 결번'이 하나도 없으면 아직 판정할 게 없다.
+        # f["missing"] 은 유예 중인 달과 since/until 밖의 달을 이미 빼고 남은 달이다.
+        # 이 조건이 없으면 1월 초 실행에서 전 거래처가 '한 건도 없음'으로 잡힌다
+        # (1/5 기준 28곳 중 27곳). 2월 초에는 since 가 미래인 거래처가 잡힌다.
         if f["rows"] == 0:
+            if not f["missing"]:
+                continue
             rows.append(_row("A. 한 건도 없음", "확인 필요", f, f["missing"],
-                             f"등록 주기 '{f['cycle']}' 인데 올해 수취 0건 · 사업자번호 오타 또는 거래 종료 확인"))
+                             f"등록 주기 '{f['cycle']}' 인데 {_gap_note(f['missing'])} 수취 0건 · "
+                             f"사업자번호 오타 또는 거래 종료 확인"))
             a_ids.add(f["biz_no"])
         elif f["cancelled"]:
             rows.append(_row("A. 발행 후 전액취소", "확인 필요", f, f["cancelled"],
@@ -162,15 +169,30 @@ def grade_all(facts, as_of, cfg):
 
 
 def _m(iso, year, default):
-    """since/until 값(YYYY-MM 또는 YYYY-MM-DD)을 당해년도 월 번호로. 다른 해면 경계값."""
+    """
+    since/until 값(YYYY-MM 또는 YYYY-MM-DD)을 당해년도 월 번호로 환산한다.
+    `default=1` 이면 하한(since), `default=12` 면 상한(until)으로 쓰인다.
+
+    다른 해일 때 경계값을 잘못 주면 조용히 틀린다. 특히 **작년에 끝난 거래처**
+    (until=2025-08) 에 상한 12 를 주면 올해 전 월이 점검 범위가 되어
+    '한 건도 없음 · 확인 필요' 로 매번 잡힌다 — until 을 넣으라는 안내와 정반대다.
+    """
     if not iso:
         return default
     y, m = int(str(iso)[:4]), int(str(iso)[5:7])
+    if y == year:
+        return m
+    is_lower = (default == 1)
     if y < year:
-        return 1 if default == 1 else 12
-    if y > year:
-        return 12 if default == 12 else 13
-    return m
+        # 올해 이전: 하한이면 1월부터 포함, 상한이면 올해는 통째로 범위 밖(0)
+        return 1 if is_lower else 0
+    # 올해 이후: 하한이면 올해는 통째로 범위 밖(13), 상한이면 12월까지 포함
+    return 13 if is_lower else 12
+
+
+def _gap_note(months):
+    """결번 월 목록을 '1,2,3월' 형태로."""
+    return ",".join(str(m) for m in months) + "월"
 
 
 def _row(kind, grade, f, gap, memo):
@@ -362,8 +384,11 @@ def write_missing(wb, st, rows, cfg, dedup_count):
                 "단발·비정기 → 정기거래 아님 / 정상 → 결번 없음, 무시 가능")
     ws["A2"].font = st.sub
     ws.append([])
+    # 헤더 행 번호를 고정값으로 적으면 제목 줄이 한 줄만 늘어도 어긋난다.
+    # (실제로 서식은 3행에, 헤더는 4행에 앉아 있었다.)
     ws.append(head)
-    st.header(ws, 3, len(head))
+    hdr_row = ws.max_row          # append 직후에 읽어야 정확하다
+    st.header(ws, hdr_row, len(head))
 
     for r in rows:
         line = [r["kind"], r["grade"]] + ([r.get("status", "")] if use_state else []) + \
@@ -376,7 +401,7 @@ def write_missing(wb, st, rows, cfg, dedup_count):
                 c.fill = fill
 
     di = 7 if use_state else 6
-    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, max_col=len(head)):
+    for row in ws.iter_rows(min_row=hdr_row + 1, max_row=ws.max_row, max_col=len(head)):
         for c in row:
             c.font, c.border = st.body, st.border
             c.alignment = Alignment(vertical="center", wrap_text=True)
@@ -385,7 +410,8 @@ def write_missing(wb, st, rows, cfg, dedup_count):
     widths = [20, 11] + ([12] if use_state else []) + [14, 26, 9, 26, 13, 50, 30]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
-    ws.freeze_panes = cfg["format"]["freeze"]["missing"]
+    # 헤더 '아래'를 얼려야 헤더가 남는다. 헤더 행 자체를 얼면 스크롤할 때 사라진다.
+    ws.freeze_panes = f"A{hdr_row + 1}"
 
 
 def write_unlisted(wb, st, facts, cfg):
@@ -399,21 +425,22 @@ def write_unlisted(wb, st, facts, cfg):
     ws.append([])
     head = ["공급자번호", "상호", "수취 월", "건수", "순공급가액", "최종수취일", "추가 권고"]
     ws.append(head)
-    st.header(ws, 3, len(head))
+    hdr_row = ws.max_row          # append 직후에 읽어야 정확하다
+    st.header(ws, hdr_row, len(head))
 
     for f in sorted(un, key=lambda x: (-x["months_got"], -x["net"])):
         rec = "추가 권장 (정기성)" if f["months_got"] >= 3 else ""
         ws.append([fmt_biz(f["biz_no"]), f["name"],
                    ",".join(str(m) for m in f["got"]) + "월" if f["got"] else "",
                    f["rows"], f["net"], f["last"], rec])
-    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, max_col=len(head)):
+    for row in ws.iter_rows(min_row=hdr_row + 1, max_row=ws.max_row, max_col=len(head)):
         for c in row:
             c.font, c.border = st.body, st.border
         row[4].number_format = st.money
         row[5].number_format = st.date
     for i, w in enumerate([14, 30, 22, 8, 14, 13, 18], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
-    ws.freeze_panes = cfg["format"]["freeze"]["unlisted"]
+    ws.freeze_panes = f"A{hdr_row + 1}"
 
 
 def write_raw(wb, st, df, cfg):
@@ -422,7 +449,8 @@ def write_raw(wb, st, df, cfg):
             "공급받는자상호", "품목명", "합계금액", "공급가액", "종류", "발급유형",
             "상계처리", "원본파일"]
     ws.append(head)
-    st.header(ws, 1, len(head))
+    hdr_row = ws.max_row          # append 직후에 읽어야 정확하다
+    st.header(ws, hdr_row, len(head))
     d = df.copy()
     d["상계"] = d["상계"].replace("", "-")
     for _, r in d.iterrows():
@@ -441,7 +469,7 @@ def write_raw(wb, st, df, cfg):
         row[9].number_format = st.money
     for i, w in enumerate([12, 6, 30, 14, 28, 14, 28, 30, 13, 13, 11, 11, 20, 32], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
-    ws.freeze_panes = cfg["format"]["freeze"]["raw"]
+    ws.freeze_panes = f"A{hdr_row + 1}"
 
 
 # ================================================================ main
