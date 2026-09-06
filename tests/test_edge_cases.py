@@ -226,13 +226,152 @@ def t_state_cycle():
             os.remove(sp)
 
 
+def _clipped_facts(as_of, vendors=None, strict=False):
+    """업로드가 실행일까지만 있는 현실 상황을 재현해 등급을 매긴다."""
+    import copy
+    import build_report as B
+    from common import load_vendors
+    cfg = copy.deepcopy(load_config())
+    if strict:
+        cfg["grace"]["mode"] = "strict"
+    df, _ = load_uploads(FIX, cfg)
+    match_offsets(df, cfg)
+    df = df[df["받는자번호"] == cfg["my_biz"]["biz_no"]]
+    df = df[df["작성일"].dt.date <= as_of]
+    facts, _ = B.build_facts(df, vendors or load_vendors(), as_of, cfg)
+    return B.grade_all(facts, as_of, cfg)
+
+
+def _n_action(rows):
+    return sum(1 for r in rows if r["grade"] == "확인 필요")
+
+
+def t_month_boundary():
+    """실행 시점이 월초일 때 전 거래처가 오탐으로 잡히지 않는지."""
+    print("\n[월초·연초 오탐]")
+    from common import load_vendors
+    total = len(load_vendors())
+
+    n_jan = _n_action(_clipped_facts(date(2026, 1, 5)))
+    check("1월 초 실행이 전 거래처를 확인 필요로 만들지 않음", n_jan < total // 2,
+          f"{total}곳 중 확인 필요 {n_jan}건")
+
+    n_feb = _n_action(_clipped_facts(date(2026, 2, 5)))
+    check("2월 초 실행도 오탐 없음", n_feb == 0, f"확인 필요 {n_feb}건")
+
+    # 정상 동작하던 시점은 그대로여야 한다
+    n_sep = _n_action(_clipped_facts(date(2026, 9, 6)))
+    check("9/6 기준 판정은 유지", 0 < n_sep < total // 2, f"확인 필요 {n_sep}건")
+
+
+def t_strict_current_month():
+    """strict 가 아직 끝나지 않은 당월을 미수취로 세면 안 된다."""
+    print("\n[strict 당월 처리]")
+    cfg = load_config()
+    cfg2 = dict(cfg)
+    cfg2["grace"] = dict(cfg["grace"], mode="strict")
+    check("strict 라도 실행 당월은 유예",
+          is_in_grace(2026, 9, date(2026, 9, 6), cfg2))
+    check("strict 는 지난 달을 유예하지 않음",
+          not is_in_grace(2026, 8, date(2026, 9, 6), cfg2))
+
+    # strict 는 '기한 전'(전월분 대기)을 확인 필요로 승격시키는 것까지가 정상이다.
+    # 그보다 더 늘면 아직 끝나지도 않은 당월을 결번으로 세고 있다는 뜻이다.
+    rows_auto = _clipped_facts(date(2026, 9, 6))
+    auto = _n_action(rows_auto)
+    grace = sum(1 for r in rows_auto if r["grade"] == "기한 전")
+    strict = _n_action(_clipped_facts(date(2026, 9, 6), strict=True))
+    check("strict 가 당월 결번으로 전 거래처를 잡지 않음", strict <= auto + grace,
+          f"auto {auto}건(+기한 전 {grace}) → strict {strict}건")
+
+
+def t_until_last_year():
+    """작년에 끝난 거래처(until=작년)는 올해 점검 대상이 아니다."""
+    print("\n[until 이 작년인 거래처]")
+    import build_report as B
+    from common import load_vendors
+    check("_m: until 이 작년이면 상한 0", B._m("2025-08", 2026, 12) == 0,
+          f"실제 {B._m('2025-08', 2026, 12)}")
+    check("_m: since 가 작년이면 하한 1", B._m("2025-08", 2026, 1) == 1)
+    check("_m: since 가 내년이면 하한 13", B._m("2027-03", 2026, 1) == 13)
+    check("_m: until 이 내년이면 상한 12", B._m("2027-03", 2026, 12) == 12)
+
+    v = load_vendors() + [{"biz_no": "1048119147", "name": "작년종료테스트",
+                           "cycle": "매월", "note": "", "until": "2025-08"}]
+    rows = _clipped_facts(date(2026, 9, 6), vendors=v)
+    hit = [r for r in rows if r["name"] == "작년종료테스트"]
+    check("작년에 끝난 거래처는 확인 필요로 안 잡힘",
+          not any(r["grade"] == "확인 필요" for r in hit),
+          f"{[r['grade'] for r in hit] or '목록에 없음'}")
+
+
+def t_sheet_headers():
+    """헤더 행 서식과 틀고정이 실제 헤더 행에 맞는지."""
+    print("\n[헤더 행·틀고정]")
+    from openpyxl import load_workbook
+    cfg = load_config()
+    with tempfile.TemporaryDirectory() as out:
+        r = run(["scripts/build_report.py", "--uploads", FIX, "--out", out,
+                 "--no-state", "--as-of", "2026-09-06"])
+        check("실행", r.returncode == 0, r.stderr.strip()[-200:])
+        wb = load_workbook(os.path.join(out, os.listdir(out)[0]))
+        for key, must in [("matrix", "공급자번호"), ("missing", "등급"),
+                          ("unlisted", "추가 권고"), ("raw", "승인번호")]:
+            ws = wb[cfg["sheets"][key]]
+            hdr = next((i for i in range(1, 9)
+                        if any(str(c.value).strip() == must for c in ws[i])), None)
+            check(f"{cfg['sheets'][key]}: 헤더 행을 찾음", hdr is not None)
+            if hdr is None:
+                continue
+            filled = all(c.fill and c.fill.fill_type for c in ws[hdr]
+                         if c.value is not None)
+            check(f"{cfg['sheets'][key]}: 헤더 행에 서식이 칠해짐", filled)
+            frozen = int("".join(ch for ch in (ws.freeze_panes or "") if ch.isdigit()))
+            check(f"{cfg['sheets'][key]}: 틀고정이 헤더 아래", frozen == hdr + 1,
+                  f"헤더 {hdr}행 / 틀고정 {ws.freeze_panes}")
+
+
+def t_duplicate_uploads():
+    """같은 구간 파일을 두 번 올린 산출물을 validate 가 잡는지."""
+    print("\n[중복 업로드]")
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as out:
+        names = sorted(os.listdir(FIX))
+        for f in names:
+            shutil.copy(os.path.join(FIX, f), os.path.join(d, f))
+        shutil.copy(os.path.join(FIX, names[-1]), os.path.join(d, "중복본.xls"))
+        r = run(["scripts/build_report.py", "--uploads", d, "--out", out,
+                 "--no-state", "--as-of", "2026-09-06"])
+        check("중복 입력으로도 리포트는 생성됨", r.returncode == 0)
+        x = os.path.join(out, os.listdir(out)[0])
+        v = run(["scripts/validate.py", x, "--uploads", d, "--as-of", "2026-09-06"])
+        check("validate 가 중복을 FAIL 로 잡음",
+              v.returncode == 1 and "승인번호 중복" in v.stdout,
+              v.stdout.strip().splitlines()[-1] if v.stdout else "")
+
+
+def t_validate_strict():
+    """strict 산출물을 --strict 로 검증하면 통과해야 한다."""
+    print("\n[validate --strict]")
+    with tempfile.TemporaryDirectory() as out:
+        r = run(["scripts/build_report.py", "--uploads", FIX, "--out", out,
+                 "--no-state", "--as-of", "2026-09-06", "--strict"])
+        check("strict 리포트 생성", r.returncode == 0, r.stderr.strip()[-200:])
+        x = os.path.join(out, os.listdir(out)[0])
+        v = run(["scripts/validate.py", x, "--uploads", FIX,
+                 "--as-of", "2026-09-06", "--strict"])
+        check("--strict 로 검증하면 FAIL 없음", v.returncode == 0,
+              v.stdout.strip().splitlines()[-1] if v.stdout else v.stderr[-200:])
+
+
 def main():
     print("=" * 68)
     print("엣지케이스 테스트")
     print("=" * 68)
     for fn in [t_biz, t_months, t_empty_frames, t_kind_detection,
                t_offset_no_miss_match, t_run_variants, t_single_kind,
-               t_empty_vendors, t_missing_vendor_in_data, t_state_cycle]:
+               t_empty_vendors, t_missing_vendor_in_data, t_state_cycle,
+               t_month_boundary, t_strict_current_month, t_until_last_year,
+               t_sheet_headers, t_duplicate_uploads, t_validate_strict]:
         try:
             fn()
         except Exception as e:
