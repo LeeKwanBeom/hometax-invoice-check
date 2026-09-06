@@ -24,7 +24,7 @@ from openpyxl.utils import get_column_letter
 from common import (SKILL_DIR, _load_json, load_config, load_vendors, load_uploads,
                     match_offsets, drop_split_offsets, live_rows, norm_biz, fmt_biz,
                     month_range, month_label, clip_period,
-                    is_in_grace, deadline_for, vat_period_of)
+                    is_in_grace, is_resolved, deadline_for, vat_period_of)
 
 GRADE_ORDER = {"확인 필요": 0, "기한 전": 1, "단발·비정기": 2, "정상": 3,
                "거래 종료": 4, "해결": 5}
@@ -565,7 +565,10 @@ def main():
     wb.save(path)
     save_state(rows, as_of, cfg)
 
-    n = {g: sum(1 for r in rows if r["grade"] == g) for g in list(GRADE_ORDER) + ["해결"]}
+    # '해결' 만 세는 규칙이 다르다. common.is_resolved 참조.
+    n = {g: sum(1 for r in rows if r["grade"] == g) for g in GRADE_ORDER}
+    n["해결"] = sum(1 for r in rows
+                  if is_resolved(r["grade"], r.get("status", "")))
     span = f"{month_label(months[0], as_of)}~{month_label(months[-1], as_of)}"
     print(f"기준일 {as_of} · 대상 월 {span} · 모드 {cfg['grace']['mode']}")
     print(f"총 {len(df)}건 / 매출분 제외 {excluded}건 / 기간 밖 제외 {out_of_period}건 / "
