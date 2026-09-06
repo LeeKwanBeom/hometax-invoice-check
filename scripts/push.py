@@ -46,6 +46,7 @@ GROUPS = {
     "vendors": ["config/vendors.json"],
     "code": [
         "sync.py",
+        "README.md",
         "config/check-config.json",
         "references/column-mapping.md",
         "references/judgment-rules.md",
