@@ -32,6 +32,8 @@ BRANCH = "main"
 # README.md 와 SKILL.md 는 push --code 로 갱신할 수 있게 받아둔다.
 # 여기 받아지는 SKILL.md 는 '저장소 사본'이다. 고친 뒤 push 하면 버전은 남지만,
 # Claude 계정에 설치된 SKILL.md 는 사용자가 직접 재업로드해야 바뀐다.
+# 설치 경로에 직접 써도 세션 간 보존되지 않는다(2026-09-06 실측).
+# 그래서 설치본은 install/SKILL.md 의 얇은 부트스트랩으로 두고, 절차는 이 사본에 둔다.
 SKIP = {".gitignore"}
 SKIP_PREFIX = (".github/",)
 
