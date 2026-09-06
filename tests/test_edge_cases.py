@@ -257,6 +257,55 @@ def t_state_cycle():
         check("'계속' 상태 표시됨", "계속" in txt)
 
 
+def t_resolved_status():
+    """
+    '해결' 이 상태 열로만 표기되는 경우를 콘솔·validate 가 세는지.
+
+    직전에 '확인 필요' 였던 곳이 이번에 **다른 등급으로 잡히면** 행을 새로
+    만들지 않고 상태만 '해결' 로 바꾼다(apply_state). 등급 열만 세면 이게
+    통째로 빠져서 시트에는 해결 2행인데 요약은 '해결 0' 이 된다.
+    실제로 사용자에게 틀린 요약이 한 번 나갔던 케이스다.
+    """
+    print("\n[해결 집계 — 상태 열 표기]")
+    with sandbox() as sb, tempfile.TemporaryDirectory() as out:
+        # 이번 회차에 '거래 종료'·'단발·비정기' 로 내려갈 두 곳을 직전 이력에 심는다
+        prev = {"run_date": "2026-08-05", "flagged": [
+            {"biz_no": "1208114525", "name": "코원에너지서비스",
+             "grade": "확인 필요", "reason": "A. 정기 거래처 결번",
+             "first_seen": "2026-08-05"},
+            {"biz_no": "5798802517", "name": "서바이빙에프앤비 주식회사",
+             "grade": "확인 필요", "reason": "A. 정기 거래처 결번",
+             "first_seen": "2026-08-05"}]}
+        json.dump(prev, open(os.path.join(sb, "state", "last-run.json"), "w",
+                             encoding="utf-8"), ensure_ascii=False, indent=2)
+
+        r = run(["scripts/build_report.py", "--uploads", FIX, "--out", out,
+                 "--as-of", "2026-09-06"], cwd=sb)
+        check("실행됨", r.returncode == 0, r.stderr.strip()[-200:])
+        check("콘솔 해결 집계가 0 이 아님", "해결 2" in r.stdout,
+              r.stdout.strip().splitlines()[-4:-1])
+
+        from openpyxl import load_workbook
+        f = sorted(os.listdir(out))[-1]
+        ws = load_workbook(os.path.join(out, f))[load_config()["sheets"]["missing"]]
+        hdr = next(i for i in range(1, 9)
+                   if "등급" in [str(c.value).strip() for c in ws[i]])
+        cols = {str(c.value).strip(): c.column for c in ws[hdr] if c.value}
+        by_status = sum(1 for i in range(hdr + 1, ws.max_row + 1)
+                        if str(ws.cell(i, cols["상태"]).value or "").strip() == "해결")
+        by_grade = sum(1 for i in range(hdr + 1, ws.max_row + 1)
+                       if str(ws.cell(i, cols["등급"]).value or "").strip() == "해결")
+        check("시트에 상태=해결 행이 있음", by_status == 2, f"상태열 {by_status}건")
+        check("등급 열만으로는 0건 — 상태 열을 세야 한다", by_grade == 0,
+              f"등급열 {by_grade}건")
+
+        v = run(["scripts/validate.py", os.path.join(out, f),
+                 "--uploads", FIX, "--as-of", "2026-09-06"], cwd=sb)
+        check("validate FAIL 없음", v.returncode == 0, v.stdout.strip()[-200:])
+        check("validate 도 해결 2곳으로 셈", "해결 2곳" in v.stdout)
+        check("해결 집계 검사가 돌았음", "해결 집계" in v.stdout)
+
+
 def _clipped_facts(as_of, vendors=None, strict=False):
     """업로드가 실행일까지만 있는 현실 상황을 재현해 등급을 매긴다."""
     import copy
@@ -534,7 +583,7 @@ def main():
     for fn in [t_biz, t_months, t_empty_frames, t_kind_detection,
                t_offset_no_miss_match, t_run_variants, t_single_kind,
                t_empty_vendors, t_broken_json, t_missing_vendor_in_data,
-               t_state_cycle,
+               t_state_cycle, t_resolved_status,
                t_month_boundary, t_strict_current_month, t_until_last_year,
                t_sheet_headers, t_duplicate_uploads, t_validate_strict,
                t_december, t_as_of_clipping, t_validate_catches_regressions,
