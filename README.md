@@ -9,8 +9,12 @@ Claude 쪽에는 `SKILL.md` 하나만 설치하고, 실행할 때마다 여기�
 ## 설치
 
 1. 이 저장소를 **공개(public)** 로 둔다. (읽기에 토큰이 필요 없게)
-2. Claude 스킬 폴더에 `SKILL.md` 만 넣는다. 저장소에도 같은 파일의 사본이 있어
-   버전이 남는다. 고칠 때는 **저장소와 설치 경로 두 곳 다** 반영해야 한다.
+2. Claude 스킬 폴더에 **`install/SKILL.md`** 만 넣는다. 절차·옵션·등급이 없는 얇은
+   부트스트랩이라 바뀔 일이 거의 없다. 정본 설명서는 저장소 `SKILL.md` 이고,
+   실행할 때 codeload 로 받아 읽는다.
+   > 설치 경로(`/mnt/skills/plugins/...`)는 **쓰기는 되지만 세션 간 보존되지 않는다.**
+   > 거기 직접 고쳐봐야 다음 세션에 원복된다(2026-09-06 실측). 내용을 바꿔야 하면
+   > 저장소를 고쳐 push 하고, 부트스트랩 자체가 바뀐 경우에만 스킬을 재업로드한다.
 3. 끝. 나머지는 실행할 때 codeload tarball 로 받아온다.
 
 > `raw.githubusercontent.com` 은 5분간 캐시되므로 쓰지 않는다.
@@ -21,7 +25,7 @@ Claude 쪽에는 `SKILL.md` 하나만 설치하고, 실행할 때마다 여기�
 ```bash
 mkdir -p ~/hometax && cd ~/hometax
 curl -sL https://codeload.github.com/LeeKwanBeom/hometax-invoice-check/tar.gz/refs/heads/main | tar xz --strip-components=1
-pip install xlrd            # 홈택스 .xls 를 읽는 데 필요
+python3 -c "import xlrd" 2>/dev/null || pip install xlrd --break-system-packages -q   # 홈택스 .xls 읽기
 
 python3 scripts/check_input.py <홈택스파일폴더>
 python3 scripts/build_report.py --uploads <홈택스파일폴더> --out <출력폴더>
