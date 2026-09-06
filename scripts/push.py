@@ -167,6 +167,13 @@ def state_regressed(old, new):
         return f"원격에는 {od} 이력이 있는데 로컬은 비어 있습니다"
     if od and nd and nd < od:
         return f"원격 {od} → 로컬 {nd} 로 되돌아갑니다"
+    if od and nd and nd == od:
+        # 날짜만 보면 같은 날 두 번 돌린 경우를 못 잡는다. 두 번째 실행이
+        # 잘못된 업로드로 돌아갔으면 원격 이력이 조용히 줄어들고,
+        # 다음 달 '신규/계속/해결' 이 그만큼 어긋난다.
+        of, nf = len(o.get("flagged", [])), len(n.get("flagged", []))
+        if nf < of:
+            return (f"같은 날짜({od})인데 확인 필요가 {of}건 → {nf}건 으로 줄어듭니다")
     return None
 
 
