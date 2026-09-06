@@ -67,7 +67,18 @@ def deadline_for(year, month, deadline_day):
 
 
 def is_in_grace(year, month, as_of, cfg):
-    """발급기한이 아직 안 지난 달인가. strict 모드면 항상 False."""
+    """
+    발급기한이 아직 안 지난 달인가.
+
+    실행 당월은 **모드와 무관하게** 유예다. 아직 끝나지 않은 달이라
+    미수취로 확정할 근거 자체가 없다. strict 를 '유예 없음'으로 곧이곧대로
+    구현하면 당월이 전 거래처 결번이 되어(9/6 실행시 확인 필요 6건 → 26건)
+    정작 쓰라고 만든 신고 직전 점검에서 못 쓰게 된다.
+
+    그 외의 달은 strict 면 유예 없음, auto 면 익월 deadline_day 까지 유예.
+    """
+    if year == as_of.year and month == as_of.month:
+        return True
     g = cfg["grace"]
     if g["mode"] != "auto":
         return False
