@@ -26,8 +26,8 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from common import (SKILL_DIR, load_config, load_vendors, load_uploads,
-                    match_offsets, norm_biz, month_range, month_label,
-                    clip_period, is_in_grace)
+                    match_offsets, drop_split_offsets, norm_biz, month_range,
+                    month_label, clip_period, is_in_grace)
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 _res = []
@@ -270,7 +270,7 @@ def check_offsets(wb, cfg):
     if not r:
         rec(FAIL, "상계 매칭", "'상계처리' 열을 못 찾음")
         return
-    cancel = orig = refund = neg = 0
+    cancel = orig = refund = neg = split = 0
     for i in range(r + 1, ws.max_row + 1):
         v = str(ws.cell(i, m["상계처리"]).value or "")
         amt = ws.cell(i, m["공급가액"]).value or 0
@@ -282,6 +282,10 @@ def check_offsets(wb, cfg):
             orig += 1
         elif "순액반영" in v:
             refund += 1
+        elif v.startswith("짝이 기간 밖"):
+            # 짝을 기간 밖에서 맺은 건. 개수가 안 맞는 게 정상이고,
+            # build_report 가 상계 표시를 이미 해제했으므로 죽은 건이 아니다.
+            split += 1
     if cancel != orig:
         rec(FAIL, "상계 매칭", f"취소분 {cancel}건 vs 원본 {orig}건 — 짝이 안 맞는다")
     elif neg and cancel == 0 and refund == 0:
@@ -290,7 +294,8 @@ def check_offsets(wb, cfg):
     elif neg == 0:
         rec(SKIP, "상계 매칭", "마이너스 건이 없음")
     else:
-        rec(PASS, "상계 매칭", f"{cancel}쌍 · 환급·할인 {refund}건 · 마이너스 {neg}건")
+        rec(PASS, "상계 매칭", f"{cancel}쌍 · 환급·할인 {refund}건 · 마이너스 {neg}건"
+            + (f" · 짝이 기간 밖 {split}건" if split else ""))
 
 
 def check_unlisted(wb, cfg, vendors):
@@ -371,8 +376,15 @@ def check_grades(wb, cfg, vendors):
                     v = mx.cell(mrow[sid], mm[label]).value
                     if v not in (None, 0):
                         bad.append(f"{i}행: 결번으로 적힌 {label} 에 매트릭스 값 {v}")
-    if n == 0:
-        rec(FAIL, "등급 분류", "미수취목록에 행이 하나도 없음 — 검사 대상을 못 찾았다")
+    if n == 0 and mrow:
+        # 아무도 안 잡힌 실행에서 미수취목록 0행은 정상이다(1월 초가 대표적).
+        # 이걸 FAIL 로 내면 tests 의 '1월 초 실행이 전 거래처를 확인 필요로
+        # 만들지 않음' 과 정면으로 충돌한다. 헤더를 찾았고 매트릭스에 점검대상
+        # 행이 있으면 마크업이 바뀐 게 아니므로 SKIP 이 맞다.
+        rec(SKIP, "등급 분류", "미수취목록이 비어 있음 — 이번 회차에 잡힌 거래처가 없다")
+    elif n == 0:
+        rec(FAIL, "등급 분류",
+            "미수취목록도 매트릭스도 비어 있음 — 검사 대상을 못 찾았다")
     elif bad:
         rec(FAIL, f"등급 분류 이상 {len(bad)}건", "\n".join(bad[:10]))
     else:
@@ -577,6 +589,7 @@ def main():
     match_offsets(df, cfg)
     df = clip_period(df[df["받는자번호"] == cfg["my_biz"]["biz_no"]],
                      month_range(as_of), as_of)
+    drop_split_offsets(df)      # build_report 와 같은 규칙을 써야 대사가 맞는다
 
     check_paths(cfg)
     check_config_single_source(cfg)
