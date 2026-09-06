@@ -28,7 +28,10 @@ import urllib.request
 REPO = "LeeKwanBeom/hometax-invoice-check"
 BRANCH = "main"
 
-# 작업 디렉토리에 풀지 않을 것. README.md 는 push --code 로 갱신할 수 있게 받아둔다.
+# 작업 디렉토리에 풀지 않을 것.
+# README.md 와 SKILL.md 는 push --code 로 갱신할 수 있게 받아둔다.
+# 여기 받아지는 SKILL.md 는 '저장소 사본'이다. 고친 뒤 push 하면 버전은 남지만,
+# Claude 계정에 설치된 SKILL.md 는 사용자가 직접 재업로드해야 바뀐다.
 SKIP = {".gitignore"}
 SKIP_PREFIX = (".github/",)
 
