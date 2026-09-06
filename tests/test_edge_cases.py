@@ -52,7 +52,8 @@ class sandbox:
 
     def __enter__(self):
         self.dir = tempfile.mkdtemp(prefix="hometax-test-")
-        for name in ["config", "references", "scripts", "state", "tests"]:
+        for name in ["config", "references", "scripts", "state", "tests",
+                     "install"]:
             src = os.path.join(SKILL, name)
             if os.path.isdir(src):
                 shutil.copytree(src, os.path.join(self.dir, name))
@@ -303,7 +304,25 @@ def t_resolved_status():
                  "--uploads", FIX, "--as-of", "2026-09-06"], cwd=sb)
         check("validate FAIL 없음", v.returncode == 0, v.stdout.strip()[-200:])
         check("validate 도 해결 2곳으로 셈", "해결 2곳" in v.stdout)
-        check("해결 집계 검사가 돌았음", "해결 집계" in v.stdout)
+        check("상태열만 2건으로 보고", "상태열만 2" in v.stdout,
+              v.stdout.strip()[-160:])
+
+    # 다른 경로도 밟는다. 이번 회차에 아예 안 잡힌 거래처는 **새 행**을 만들고
+    # 등급·상태에 '해결' 을 함께 붙인다. 두 경로를 한쪽 기준으로만 검사하면
+    # 멀쩡한 산출물에 FAIL 이 난다(실제로 1월 실행에서 오탐이 났다).
+    with sandbox() as sb, tempfile.TemporaryDirectory() as out:
+        json.dump(prev, open(os.path.join(sb, "state", "last-run.json"), "w",
+                             encoding="utf-8"), ensure_ascii=False, indent=2)
+        r = run(["scripts/build_report.py", "--uploads", FIX, "--out", out,
+                 "--as-of", "2026-01-05"], cwd=sb)
+        check("1월 실행됨", r.returncode == 0, r.stderr.strip()[-200:])
+        f = sorted(os.listdir(out))[-1]
+        v = run(["scripts/validate.py", os.path.join(out, f),
+                 "--uploads", FIX, "--as-of", "2026-01-05"], cwd=sb)
+        check("새 행 경로에서 FAIL 없음", v.returncode == 0,
+              v.stdout.strip()[-240:])
+        check("등급·상태 동시 표기를 이중계상하지 않음", "상태열만 0" in v.stdout,
+              v.stdout.strip()[-160:])
 
 
 def _clipped_facts(as_of, vendors=None, strict=False):
@@ -566,6 +585,24 @@ def t_config_single_source():
         check("죽은 config 키를 잡음",
               "죽은 키" in r2.stdout and "nobody_reads_this" in r2.stdout,
               r2.stdout.strip()[-120:])
+
+        # references/ 만 훑던 동안 SKILL.md 의 deadline_day 사본이 1곳 → 3곳으로
+        # 늘어나도 FAIL 0 이었다. 설명서·README 도 스캔 범위에 들어왔는지 본다.
+        json.dump({k: v for k, v in d.items() if k != "thresholds"} |
+                  {"thresholds": {k: v for k, v in d["thresholds"].items()
+                                  if k != "nobody_reads_this"}},
+                  open(cfgp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        for doc in ["SKILL.md", "README.md"]:
+            dp = os.path.join(sb, doc)
+            keep = open(dp, encoding="utf-8").read()
+            open(dp, "w", encoding="utf-8").write(
+                keep + "\n발급기한은 익월 10일이다.\n")
+            r3 = run(["scripts/validate.py", x, "--uploads", FIX,
+                      "--as-of", "2026-09-06"], cwd=sb)
+            check(f"{doc} 의 deadline_day 사본을 잡음",
+                  "단일 출처 위반" in r3.stdout and doc in r3.stdout,
+                  r3.stdout.strip()[-120:])
+            open(dp, "w", encoding="utf-8").write(keep)
 
 
 def t_cycle_warning():
