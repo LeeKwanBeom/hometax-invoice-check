@@ -27,7 +27,7 @@ from openpyxl import load_workbook
 
 from common import (SKILL_DIR, load_config, load_vendors, load_uploads,
                     match_offsets, drop_split_offsets, norm_biz, month_range,
-                    month_label, clip_period, is_in_grace)
+                    month_label, clip_period, is_in_grace, is_resolved)
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 _res = []
@@ -414,10 +414,12 @@ def check_state(wb, cfg):
     action, resolved = set(), set()
     for i in range(r + 1, ws.max_row + 1):
         g = str(ws.cell(i, m["등급"]).value or "").strip()
+        s = str(ws.cell(i, m["상태"]).value or "").strip()
         sid = norm_biz(ws.cell(i, m["공급자번호"]).value)
         if g == "확인 필요":
             action.add(sid)
-        elif g == "해결":
+        # 등급만 보면 '거래 종료 + 상태=해결' 행이 통째로 빠진다.
+        elif is_resolved(g, s):
             resolved.add(sid)
     if action != saved:
         rec(FAIL, "실행 이력 비교",
@@ -428,6 +430,56 @@ def check_state(wb, cfg):
             f"'해결'인데 이력에 남아 있음 — 다음 실행에도 또 뜬다: {sorted(resolved & saved)}")
     else:
         rec(PASS, "실행 이력 비교", f"확인 필요 {len(action)}곳 저장 · 해결 {len(resolved)}곳")
+
+
+def check_resolved(wb, cfg):
+    """
+    '해결' 집계가 **등급 열과 상태 열을 모두** 세는지.
+
+    이 검사가 없던 동안 build_report 콘솔과 validate 가 나란히 '해결 0' 을
+    찍었고, 시트에는 `상태=해결` 행이 2개 있었다. 둘 다 등급 열만 셌기 때문이다.
+    산출물은 옳고 요약만 틀리는 형태라 다른 검사로는 영영 안 걸린다.
+
+    그래서 두 표기를 나눠서 찍는다. 콘솔의 '해결 N' 과 여기 '총 N건' 이
+    다르면 어느 한쪽이 다시 한 표기만 세고 있다는 뜻이다.
+    """
+    ws = wb[cfg["sheets"]["missing"]]
+    r, m = find_header_row(ws, ["등급"])
+    if not r:
+        rec(FAIL, "해결 집계", "'등급' 열을 못 찾음")
+        return
+    if "상태" not in m:
+        rec(SKIP, "해결 집계", "상태 열이 없음(--no-state 로 만든 산출물)")
+        return
+
+    by_grade, by_status, total, rows = 0, 0, 0, 0
+    for i in range(r + 1, ws.max_row + 1):
+        g = str(ws.cell(i, m["등급"]).value or "").strip()
+        if not g:
+            continue
+        rows += 1
+        s = str(ws.cell(i, m["상태"]).value or "").strip()
+        if g == "해결":
+            by_grade += 1
+        if s == "해결":
+            by_status += 1
+        if is_resolved(g, s):
+            total += 1
+
+    if rows == 0:
+        rec(SKIP, "해결 집계", "미수취목록이 비어 있음")
+    elif total != by_grade + by_status:
+        # 한 행에 등급도 상태도 '해결' 이면 이중 표기다. apply_state 는
+        # 둘 중 하나만 붙이므로 여기 걸리면 상태 부여 로직이 바뀐 것이다.
+        rec(FAIL, "해결 집계",
+            f"등급 {by_grade} + 상태 {by_status} = {by_grade + by_status} 인데 "
+            f"실제 해결 행은 {total}건 — 한 행에 두 표기가 겹쳤다")
+    elif total == 0:
+        rec(SKIP, "해결 집계", "이번 회차에 해결된 거래처가 없음")
+    else:
+        rec(PASS, "해결 집계",
+            f"총 {total}건 (등급열 {by_grade} · 상태열 {by_status}) — "
+            f"콘솔의 '해결' 숫자와 같아야 한다")
 
 
 def check_grace(wb, cfg, as_of):
@@ -605,6 +657,7 @@ def main():
     check_unlisted(wb, cfg, vendors)
     check_grades(wb, cfg, vendors)
     check_state(wb, cfg)
+    check_resolved(wb, cfg)
     check_grace(wb, cfg, as_of)
 
     print(f"\n산출물 검증 · {os.path.basename(a.xlsx)} · 기준일 {as_of}\n" + "=" * 68)
