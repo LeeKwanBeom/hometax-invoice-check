@@ -440,8 +440,11 @@ def check_resolved(wb, cfg):
     찍었고, 시트에는 `상태=해결` 행이 2개 있었다. 둘 다 등급 열만 셌기 때문이다.
     산출물은 옳고 요약만 틀리는 형태라 다른 검사로는 영영 안 걸린다.
 
-    그래서 두 표기를 나눠서 찍는다. 콘솔의 '해결 N' 과 여기 '총 N건' 이
-    다르면 어느 한쪽이 다시 한 표기만 세고 있다는 뜻이다.
+    두 경로가 표기를 다르게 남긴다.
+      - 새 행 경로  : 등급 '해결' + 상태 '해결' 을 **함께** 붙인다
+      - 상태만 경로 : 기존 행의 등급은 그대로 두고 상태만 '해결' 로 바꾼다
+    그래서 `상태열만` 이 0 이 아니면, 등급만 세는 코드는 그만큼 적게 센다.
+    콘솔의 '해결 N' 과 여기 '총 N건' 이 다르면 한쪽이 다시 한 표기만 세는 것이다.
     """
     ws = wb[cfg["sheets"]["missing"]]
     r, m = find_header_row(ws, ["등급"])
@@ -452,7 +455,7 @@ def check_resolved(wb, cfg):
         rec(SKIP, "해결 집계", "상태 열이 없음(--no-state 로 만든 산출물)")
         return
 
-    by_grade, by_status, total, rows = 0, 0, 0, 0
+    by_grade, total, rows, bad = 0, 0, 0, []
     for i in range(r + 1, ws.max_row + 1):
         g = str(ws.cell(i, m["등급"]).value or "").strip()
         if not g:
@@ -461,24 +464,23 @@ def check_resolved(wb, cfg):
         s = str(ws.cell(i, m["상태"]).value or "").strip()
         if g == "해결":
             by_grade += 1
-        if s == "해결":
-            by_status += 1
+            if s != "해결":
+                bad.append(f"{i}행")
         if is_resolved(g, s):
             total += 1
 
     if rows == 0:
         rec(SKIP, "해결 집계", "미수취목록이 비어 있음")
-    elif total != by_grade + by_status:
-        # 한 행에 등급도 상태도 '해결' 이면 이중 표기다. apply_state 는
-        # 둘 중 하나만 붙이므로 여기 걸리면 상태 부여 로직이 바뀐 것이다.
-        rec(FAIL, "해결 집계",
-            f"등급 {by_grade} + 상태 {by_status} = {by_grade + by_status} 인데 "
-            f"실제 해결 행은 {total}건 — 한 행에 두 표기가 겹쳤다")
     elif total == 0:
         rec(SKIP, "해결 집계", "이번 회차에 해결된 거래처가 없음")
+    elif bad:
+        # 새 행 경로는 등급·상태를 **함께** 붙인다(apply_state). 등급만 '해결'
+        # 인 행이 있으면 상태 부여가 빠진 것이고, 상태 열로 세는 쪽이 어긋난다.
+        rec(FAIL, "해결 집계",
+            f"등급은 '해결' 인데 상태가 비어 있는 행 {len(bad)}개: {bad[:10]}")
     else:
         rec(PASS, "해결 집계",
-            f"총 {total}건 (등급열 {by_grade} · 상태열 {by_status}) — "
+            f"총 {total}건 (등급열 {by_grade} · 상태열만 {total - by_grade}) — "
             f"콘솔의 '해결' 숫자와 같아야 한다")
 
 
@@ -551,13 +553,22 @@ def check_config_single_source(cfg):
         if fn.endswith(".py"):
             py[f"scripts/{fn}"] = code_only(open(
                 os.path.join(SKILL_DIR, "scripts", fn), encoding="utf-8").read())
+    # 문서 스캔 범위. references/ 만 보던 동안 SKILL.md 의 deadline_day 사본이
+    # 1곳 → 3곳으로 늘어나도 FAIL 0 이 나왔다. 설명서·README·부트스트랩까지 본다.
+    #
+    # audit/ 는 **일부러 뺀다.** 점검 기준선은 문제가 된 원문을 그대로 인용해
+    # 보관하는 파일이라, 여기를 스캔하면 인용문이 전부 위반으로 잡혀
+    # 검사가 시끄러워지고 아무도 안 보게 된다.
     docs = {}
-    ref = os.path.join(SKILL_DIR, "references")
-    if os.path.isdir(ref):
-        for fn in os.listdir(ref):
-            if fn.endswith(".md"):
-                docs[f"references/{fn}"] = open(
-                    os.path.join(ref, fn), encoding="utf-8").read()
+    for rel in ["references", "install", ""]:
+        d = os.path.join(SKILL_DIR, rel) if rel else SKILL_DIR
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".md"):
+                continue
+            key = f"{rel}/{fn}" if rel else fn
+            docs[key] = open(os.path.join(d, fn), encoding="utf-8").read()
 
     joined = "\n".join(py.values())
     dead = []
