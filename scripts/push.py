@@ -8,7 +8,8 @@
 
   state    state/last-run.json          실행할 때마다 바뀜
   vendors  config/vendors.json          거래처 추가·수정할 때
-  code     SKILL.md scripts/ config/ references/ tests/ sync.py README.md
+  code     SKILL.md scripts/ config/check-config.json references/
+           tests/ audit/ sync.py README.md
 
 기본값은 state + vendors 다. **코드를 고쳤으면 --code 를 반드시 붙인다.**
 
@@ -57,24 +58,34 @@ GROUPS = {
         "scripts/build_report.py",
         "scripts/validate.py",
         "scripts/push.py",
-        "tests/test_edge_cases.py",
     ],
 }
 
 
-def _fixtures():
+def _scan(rel):
     """
-    테스트 픽스처도 code 묶음이다. 목록에서 빠져 있으면 픽스처를 고쳐도
-    영영 저장소에 안 올라가고, 다음 sync 때 옛 파일로 덮여 되돌아간다.
+    디렉토리 안의 파일을 code 묶음에 통째로 넣는다.
+
+    목록에 하드코딩하면 새 파일을 만들어도 영영 저장소에 안 올라가고,
+    다음 sync 때 옛 상태로 덮여 되돌아간다. 테스트 픽스처가 실제로 그랬다.
+    없는 디렉토리는 빈 목록이라 그냥 건너뛴다.
     """
-    d = os.path.join(ROOT, "tests", "fixtures")
+    d = os.path.join(ROOT, *rel.split("/"))
     if not os.path.isdir(d):
         return []
-    return sorted(f"tests/fixtures/{f}" for f in os.listdir(d)
-                  if not f.startswith("."))
+    out = []
+    for base, _, files in os.walk(d):
+        for f in sorted(files):
+            if f.startswith("."):
+                continue
+            full = os.path.join(base, f)
+            out.append(os.path.relpath(full, ROOT).replace(os.sep, "/"))
+    return sorted(out)
 
 
-GROUPS["code"] += _fixtures()
+# tests/ = 테스트 코드와 픽스처, audit/ = 점검 이력 메모(last-audit.md 등).
+# 파일명을 하나씩 적어두면 새로 만든 파일이 조용히 빠진다. 통째로 훑는다.
+GROUPS["code"] += _scan("tests") + _scan("audit")
 
 
 # ---------------------------------------------------------------- GitHub API
@@ -198,7 +209,7 @@ def run_tests():
     test = os.path.join(ROOT, "tests", "test_edge_cases.py")
     if not os.path.exists(test):
         print("  경고  tests/test_edge_cases.py 가 없습니다.")
-        print("        sync.py . --with-tests 로 받은 뒤 다시 시도하세요.")
+        print("        python3 sync.py . 로 저장소 최신본을 받은 뒤 다시 시도하세요.")
         return False
     print("  엣지케이스 테스트 실행 중...")
     r = subprocess.run([sys.executable, "tests/test_edge_cases.py"],
