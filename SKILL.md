@@ -61,6 +61,11 @@ push 직후 다시 받으면 옛 파일이 내려온다. codeload 는 캐시되�
 
 대화 도중 다시 받아야 하면 `python3 sync.py .` 를 쓴다. 같은 tarball 방식이다.
 
+| 옵션 | 언제 |
+|---|---|
+| `--ref <브랜치\|커밋SHA>` | 특정 커밋 시점 코드로 되돌려 확인. 기본 `main` |
+| `--token <토큰>` | 저장소를 비공개로 바꿨을 때만. 지금은 Public 이라 불필요 |
+
 판정 논리나 서식 규격을 이해해야 하면 `references/` 안의 문서를 읽는다.
 특히 등급 판정을 손보기 전에는 `references/judgment-rules.md` 를 먼저 읽는다.
 
@@ -86,6 +91,10 @@ push 직후 다시 받으면 옛 파일이 내려온다. codeload 는 캐시되�
 cd /home/claude/hometax
 python3 scripts/check_input.py /mnt/user-data/uploads
 ```
+
+과거 시점을 재현할 때는 `--as-of YYYY-MM-DD` 를 붙인다. **4단계에서 `--as-of` 를
+쓸 거면 여기에도 같은 날짜를 준다.** 안 그러면 검증은 오늘 기준, 리포트는 과거
+기준이 되어 기간 구간 판정이 어긋난다.
 
 **FAIL 이 하나라도 나오면 리포트를 만들지 말고 먼저 사용자에게 알린다.**
 
@@ -144,6 +153,19 @@ python3 scripts/validate.py <파일>.xlsx --uploads /mnt/user-data/uploads --str
 - "해결" 로 뜬 항목 — 지난달 요청이 처리된 것. **한 번만 표시되고 사라진다**
 - 매출분 제외 건수, 상계쌍 수
 
+`미수취목록` 시트의 등급은 여섯 가지다. 채팅에 옮기는 건 사실상 위의 두 개뿐이다.
+
+| 등급 | 뜻 | 조치 |
+|---|---|---|
+| `확인 필요` | 기한이 지났는데 안 왔거나 발행 후 전액취소됨 | **거래처에 발행 요청** |
+| `기한 전` | 발급기한(익월 10일)이 아직 남음 | 기다린다 |
+| `단발·비정기` | 정기 거래가 아니라 결번에 의미가 없음 | 무시 |
+| `정상` | 결번 없음 | 무시 |
+| `거래 종료` | `vendors.json` 에 `until` 로 등록됨 — 점검 대상 아님 | 무시. 아직 거래 중인데 여기 뜨면 `until` 을 지운다 |
+| `해결` | 직전 실행의 `확인 필요` 가 이번엔 정상 | 확인만. 다음 실행부터 안 보인다 |
+
+판정 논리를 손보기 전에는 `references/judgment-rules.md` 를 먼저 읽는다.
+
 ### 7단계. 저장소에 반영 (조건부)
 
 **대화 안에서 고친 것은 컨테이너와 함께 사라진다.** 저장소에 올려야만 남는다.
@@ -155,7 +177,10 @@ python3 scripts/validate.py <파일>.xlsx --uploads /mnt/user-data/uploads --str
 |---|---|---|
 | `state` | `state/last-run.json` | 실행할 때마다 (기본 포함) |
 | `vendors` | `config/vendors.json` | 거래처 추가·수정 (기본 포함) |
-| `code` | `SKILL.md`, `scripts/`, `config/check-config.json`, `references/`, `tests/`, `sync.py`, `README.md` | **스킬 자체를 고쳤을 때. `--code` 필수** |
+| `code` | `SKILL.md`, `scripts/`, `config/check-config.json`, `references/`, `tests/`, `audit/`, `sync.py`, `README.md` | **스킬 자체를 고쳤을 때. `--code` 필수** |
+
+`tests/` 와 `audit/` 는 파일명을 적어두지 않고 디렉토리째 훑는다. 새 파일을
+만들어도 목록을 고칠 필요가 없다. 없는 디렉토리는 그냥 건너뛴다.
 
 `SKILL.md` 도 저장소에 있고 `--code` 로 함께 올라간다. **두 곳을 다 고쳐야 한다.**
 
@@ -179,6 +204,20 @@ python3 scripts/push.py <토큰>                  # 이력·거래처만
 python3 scripts/push.py <토큰> --code           # 코드까지 고쳤을 때
 python3 scripts/push.py <토큰> --code --dry-run # 뭐가 바뀌는지 먼저 확인
 ```
+
+| 옵션 | 언제 |
+|---|---|
+| `--code` | 코드·문서·테스트까지. 안 붙이면 `state`+`vendors` 만 |
+| `--dry-run` | 비교만 하고 올리지 않음. 확신이 없으면 먼저 이걸로 본다 |
+| `--only state\|vendors\|code` | 한 묶음만. 예: 거래처만 고쳤을 때 `--only vendors` |
+| `--message "..."` | 커밋 메시지 지정. 미지정시 바뀐 파일명으로 자동 생성 |
+| `--skip-tests` | 테스트 게이트를 건너뛴다. **쓰지 않는다** |
+| `--force` | 실행 이력이 뒤로 가도 강행. **쓰지 않는다** (아래 참고) |
+
+`push.py` 는 `state/last-run.json` 이 원격보다 옛것이면 스스로 멈춘다.
+sync 하지 않은 폴더에서 올려 원격 이력을 지우는 사고를 막는 장치다.
+이게 걸리면 `--force` 로 뚫지 말고 **`sync.py` 로 최신본을 받은 폴더에서 다시
+실행한다.** 강행하면 '신규/계속/해결' 비교 기준이 그만큼 사라진다.
 
 올리기 전에 **바뀐 파일과 줄 수를 먼저 출력한다.** 예상과 다르면 그 시점에 멈춘다.
 
@@ -301,7 +340,8 @@ scripts/common.py          config 로딩·파싱·상계 매칭
 scripts/check_input.py     입력 사전 검증
 scripts/build_report.py    리포트 생성
 scripts/validate.py        산출물 검증
-scripts/push.py            vendors·state 저장소 반영
+scripts/push.py            state·vendors·code 저장소 반영
 state/last-run.json        직전 실행 결과 (자동 생성)
 tests/                     엣지케이스 테스트 + 샘플 파일
+audit/                     점검 이력 메모 (선택. 있으면 --code 로 함께 올라간다)
 ```
