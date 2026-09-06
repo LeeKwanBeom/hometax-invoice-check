@@ -21,9 +21,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from common import (SKILL_DIR, load_config, load_vendors, load_uploads,
+from common import (SKILL_DIR, _load_json, load_config, load_vendors, load_uploads,
                     match_offsets, live_rows, norm_biz, fmt_biz,
-                    month_range, is_in_grace, deadline_for, vat_period_of)
+                    month_range, month_label, clip_period,
+                    is_in_grace, deadline_for, vat_period_of)
 
 GRADE_ORDER = {"확인 필요": 0, "기한 전": 1, "단발·비정기": 2, "정상": 3,
                "거래 종료": 4, "해결": 5}
@@ -38,8 +39,7 @@ def build_facts(df, vendors, as_of, cfg):
     """
     months = month_range(as_of)
     mine = cfg["my_biz"]["biz_no"]
-    df = df[df["받는자번호"] == mine]
-    df = df[df["연"] == as_of.year]
+    df = clip_period(df[df["받는자번호"] == mine], months, as_of)
 
     by_vendor = {sid: g for sid, g in df.groupby("공급자번호")}
     listed = {norm_biz(v["biz_no"]) for v in vendors}
@@ -62,26 +62,29 @@ def build_facts(df, vendors, as_of, cfg):
 def _one(sid, v, g, months, as_of, cfg, listed):
     cells, got, missing, cancelled, grace = {}, [], [], [], []
     # 연중에 거래를 시작·종료한 거래처는 그 밖의 달을 결번으로 세지 않는다.
-    lo = _m(v.get("since"), as_of.year, 1)
-    hi = _m(v.get("until"), as_of.year, 12)
+    # 점검 기간에 전년 12월이 섞일 수 있으므로 범위도 연도별로 따로 계산한다.
+    scope = {y: (_m(v.get("since"), y, 1), _m(v.get("until"), y, 12))
+             for y in {yy for yy, _ in months}}
 
-    for m in months:
-        gm = g[g["월"] == m] if len(g) else g
-        in_grace = is_in_grace(as_of.year, m, as_of, cfg)
+    for ym in months:
+        y, m = ym
+        gm = g[(g["연"] == y) & (g["월"] == m)] if len(g) else g
+        in_grace = is_in_grace(y, m, as_of, cfg)
+        lo, hi = scope[y]
         out_of_scope = not (lo <= m <= hi)
         if len(gm) == 0:
             state = "out" if out_of_scope else ("grace" if in_grace else "none")
-            cells[m] = {"amount": None, "state": state}
+            cells[ym] = {"amount": None, "state": state}
             if state == "grace":
-                grace.append(m)
+                grace.append(ym)
             elif state == "none":
-                missing.append(m)
+                missing.append(ym)
         else:
             lv = live_rows(gm)
             state = "cancelled" if len(lv) == 0 else "ok"
-            cells[m] = {"amount": int(gm["공급가액n"].sum()), "state": state,
-                        "count": len(gm)}
-            (cancelled if state == "cancelled" else got).append(m)
+            cells[ym] = {"amount": int(gm["공급가액n"].sum()), "state": state,
+                         "count": len(gm)}
+            (cancelled if state == "cancelled" else got).append(ym)
 
     lv_all = live_rows(g)
     if len(lv_all):
@@ -126,7 +129,7 @@ def grade_all(facts, as_of, cfg):
             if not f["missing"]:
                 continue
             rows.append(_row("A. 한 건도 없음", "확인 필요", f, f["missing"],
-                             f"등록 주기 '{f['cycle']}' 인데 {_gap_note(f['missing'])} 수취 0건 · "
+                             f"등록 주기 '{f['cycle']}' 인데 {_labels(f['missing'], as_of)} 수취 0건 · "
                              f"사업자번호 오타 또는 거래 종료 확인"))
             a_ids.add(f["biz_no"])
         elif f["cancelled"]:
@@ -135,7 +138,7 @@ def grade_all(facts, as_of, cfg):
             a_ids.add(f["biz_no"])
         elif monthly and f["missing"]:
             rows.append(_row("A. 정기 거래처 결번", "확인 필요", f, f["missing"],
-                             f"{_pat(f)} · 정기 패턴 대비 결번"))
+                             f"{_pat(f, as_of)} · 정기 패턴 대비 결번"))
             a_ids.add(f["biz_no"])
 
     for f in facts:
@@ -146,20 +149,20 @@ def grade_all(facts, as_of, cfg):
 
         # 실행 당월은 언제나 유예 상태라 판정에 쓰면 안 된다.
         # 실제로 기다리는 중인 달은 '지난 달인데 아직 기한이 안 지난' 달뿐이다.
-        pending = [m for m in f["grace"] if m != as_of.month]
+        pending = [ym for ym in f["grace"] if ym != (as_of.year, as_of.month)]
 
         if f["ended"]:
             grade, memo, gap = "거래 종료", \
-                f"{_pat(f)} · vendors.json 에 until={f['ended']} 로 등록됨 — 점검 대상 아님", []
+                f"{_pat(f, as_of)} · vendors.json 에 until={f['ended']} 로 등록됨 — 점검 대상 아님", []
         elif pending and not f["missing"]:
             grade, memo, gap = "기한 전", \
-                f"{_pat(f)} · {_grace_note(pending, as_of, cfg)}", []
+                f"{_pat(f, as_of)} · {_grace_note(pending, as_of, cfg)}", []
         elif not f["missing"] and not f["cancelled"]:
-            grade, memo, gap = "정상", f"{_pat(f)} · 결번 없음 · 발행일이 월초라 당월분 미도래", []
+            grade, memo, gap = "정상", f"{_pat(f, as_of)} · 결번 없음 · 발행일이 월초라 당월분 미도래", []
         elif f["months_got"] <= cfg["thresholds"]["sporadic_max_months"]:
-            grade, memo, gap = "단발·비정기", f"{_pat(f)} · 정기 거래 아님 → 경과일 기준 무의미", []
+            grade, memo, gap = "단발·비정기", f"{_pat(f, as_of)} · 정기 거래 아님 → 경과일 기준 무의미", []
         else:
-            grade, memo, gap = "확인 필요", f"{_pat(f)} · 연속 수취 후 중단됨", f["missing"]
+            grade, memo, gap = "확인 필요", f"{_pat(f, as_of)} · 연속 수취 후 중단됨", f["missing"]
         rows.append(_row(f"C. 최종수취 {cfg['thresholds']['stale_days']}일 경과",
                          grade, f, gap, memo))
 
@@ -190,9 +193,9 @@ def _m(iso, year, default):
     return 13 if is_lower else 12
 
 
-def _gap_note(months):
-    """결번 월 목록을 '1,2,3월' 형태로."""
-    return ",".join(str(m) for m in months) + "월"
+def _labels(yms, as_of):
+    """(연,월) 목록을 '1월, 2월' / '전년 12월' 형태로."""
+    return ", ".join(month_label(ym, as_of) for ym in yms)
 
 
 def _row(kind, grade, f, gap, memo):
@@ -201,17 +204,17 @@ def _row(kind, grade, f, gap, memo):
             "note": f["note"]}
 
 
-def _pat(f):
+def _pat(f, as_of):
     if not f["got"]:
         return "수취 0개월"
-    return f"{len(f['got'])}개월 수취({','.join(str(m) for m in f['got'])}월)"
+    return f"{len(f['got'])}개월 수취({_labels(f['got'], as_of)})"
 
 
 def _grace_note(pending, as_of, cfg):
-    m = min(pending)
-    dl = deadline_for(as_of.year, m, cfg["grace"]["deadline_day"])
+    ym = min(pending)
+    dl = deadline_for(ym[0], ym[1], cfg["grace"]["deadline_day"])
     left = (dl - as_of).days
-    return f"{m}월분 발급기한 {dl} (D-{left}) — 아직 미수취 아님"
+    return f"{month_label(ym, as_of)}분 발급기한 {dl} (D-{left}) — 아직 미수취 아님"
 
 
 # ================================================================ 상태 비교
@@ -220,8 +223,9 @@ def load_state(cfg):
     p = os.path.join(SKILL_DIR, cfg["state"]["path"])
     if not os.path.exists(p):
         return None
-    with open(p, encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json(p, "실행 이력(last-run.json)",
+                      "이 파일만 지우고 다시 실행하면 이번 회차부터 다시 쌓인다. "
+                      "다만 '신규/계속/해결' 비교는 한 번 끊긴다.")
 
 
 def apply_state(rows, prev, as_of, cfg):
@@ -319,11 +323,11 @@ def write_matrix(wb, st, facts, months, as_of, cfg):
                 f"빈칸=미수취 · 노랑=발행 후 전액취소 · 연파랑=발급기한 전")
     ws["A2"].font = st.sub
 
-    head = ["공급자번호", "상호", "주기"] + [f"{m}월" for m in months] + \
+    head = ["공급자번호", "상호", "주기"] + [month_label(ym, as_of) for ym in months] + \
            ["순공급가액", "최종수취일", "대상"]
     ws.append([])
     if cfg["vat_period"]["enabled"]:
-        band = ["", "", ""] + [vat_period_of(m, cfg) for m in months] + ["", "", ""]
+        band = ["", "", ""] + [vat_period_of(m, cfg) for _, m in months] + ["", "", ""]
         ws.append(band)
         for i in range(4, 4 + len(months)):
             ws.cell(4, i).font = st.sub
@@ -337,13 +341,13 @@ def write_matrix(wb, st, facts, months, as_of, cfg):
     facts = sorted(facts, key=lambda f: (not f["listed"], -f["months_got"], f["name"]))
     for f in facts:
         line = [fmt_biz(f["biz_no"]), f["name"], f["cycle"]]
-        for m in months:
-            line.append(f["cells"][m]["amount"])
+        for ym in months:
+            line.append(f["cells"][ym]["amount"])
         line += [f["net"], f["last"], "점검대상" if f["listed"] else "대상외"]
         ws.append(line)
         r = ws.max_row
-        for i, m in enumerate(months):
-            s = f["cells"][m]["state"]
+        for i, ym in enumerate(months):
+            s = f["cells"][ym]["state"]
             if s == "cancelled":
                 ws.cell(r, 4 + i).fill = st.cancelled
             elif s == "grace" and st.by_grade["기한 전"]:
@@ -368,7 +372,7 @@ def write_matrix(wb, st, facts, months, as_of, cfg):
     return ws
 
 
-def write_missing(wb, st, rows, cfg, dedup_count):
+def write_missing(wb, st, rows, cfg, dedup_count, as_of):
     ws = wb.create_sheet(cfg["sheets"]["missing"])
     use_state = cfg["state"]["enabled"]
     head = ["유형", "등급"] + (["상태"] if use_state else []) + \
@@ -393,7 +397,7 @@ def write_missing(wb, st, rows, cfg, dedup_count):
     for r in rows:
         line = [r["kind"], r["grade"]] + ([r.get("status", "")] if use_state else []) + \
                [fmt_biz(r["biz_no"]), r["name"], r["cycle"],
-                ", ".join(f"{m}월" for m in r["gap"]), r["last"], r["memo"], r["note"]]
+                _labels(r["gap"], as_of), r["last"], r["memo"], r["note"]]
         ws.append(line)
         fill = st.by_grade.get(r["grade"])
         if fill:
@@ -414,7 +418,22 @@ def write_missing(wb, st, rows, cfg, dedup_count):
     ws.freeze_panes = f"A{hdr_row + 1}"
 
 
-def write_unlisted(wb, st, facts, cfg):
+def unlisted_reco(f, cfg):
+    """
+    vendors.json 에 추가할지 권할 기준. 임계값은 config 가 유일한 출처다.
+
+    월수만 보면 '한 달에 몰아서 큰 금액'이 통째로 묻힌다(7·8월에만 4,953만원이
+    찍힌 곳이 아무 표시 없이 지나갔다). 그래서 금액 기준을 함께 본다.
+    """
+    th = cfg["thresholds"]
+    if f["months_got"] >= th["unlisted_recommend_months"]:
+        return "추가 권장 (정기성)"
+    if f["net"] >= th["unlisted_recommend_amount"]:
+        return "추가 권장 (금액)"
+    return ""
+
+
+def write_unlisted(wb, st, facts, cfg, as_of):
     """점검 대상에는 없는데 자료에 등장한 공급자."""
     ws = wb.create_sheet(cfg["sheets"]["unlisted"])
     un = [f for f in facts if not f["listed"]]
@@ -423,16 +442,15 @@ def write_unlisted(wb, st, facts, cfg):
     ws["A2"] = "정기 거래가 된 곳은 config/vendors.json 에 추가할 것. 일회성이면 그대로 둔다."
     ws["A2"].font = st.sub
     ws.append([])
-    head = ["공급자번호", "상호", "수취 월", "건수", "순공급가액", "최종수취일", "추가 권고"]
+    head = ["공급자번호", "상호", "수취 월", "건수", "순공급가액", "최종수취일", "추가 권장"]
     ws.append(head)
     hdr_row = ws.max_row          # append 직후에 읽어야 정확하다
     st.header(ws, hdr_row, len(head))
 
     for f in sorted(un, key=lambda x: (-x["months_got"], -x["net"])):
-        rec = "추가 권장 (정기성)" if f["months_got"] >= 3 else ""
         ws.append([fmt_biz(f["biz_no"]), f["name"],
-                   ",".join(str(m) for m in f["got"]) + "월" if f["got"] else "",
-                   f["rows"], f["net"], f["last"], rec])
+                   _labels(f["got"], as_of) if f["got"] else "",
+                   f["rows"], f["net"], f["last"], unlisted_reco(f, cfg)])
     for row in ws.iter_rows(min_row=hdr_row + 1, max_row=ws.max_row, max_col=len(head)):
         for c in row:
             c.font, c.border = st.body, st.border
@@ -492,10 +510,17 @@ def main():
         cfg["state"]["enabled"] = False
 
     vendors = load_vendors()
-    df, _meta = load_uploads(a.uploads, cfg)
-    excluded = int((df["받는자번호"] != cfg["my_biz"]["biz_no"]).sum())
-    pairs = match_offsets(df, cfg)
-    df = df[df["받는자번호"] == cfg["my_biz"]["biz_no"]]
+    df_all, _meta = load_uploads(a.uploads, cfg)
+    mine = cfg["my_biz"]["biz_no"]
+    excluded = int((df_all["받는자번호"] != mine).sum())
+    pairs = match_offsets(df_all, cfg)
+
+    # 리포트의 모든 시트가 같은 기간을 본다. 원본정제데이터만 안 자르면
+    # 검증기가 다른 기준으로 세어 멀쩡한 산출물에 FAIL 이 난다.
+    months = month_range(as_of)
+    mine_rows = df_all[df_all["받는자번호"] == mine]
+    df = clip_period(mine_rows, months, as_of)
+    out_of_period = len(mine_rows) - len(df)
 
     facts, months = build_facts(df, vendors, as_of, cfg)
     rows = grade_all(facts, as_of, cfg)
@@ -511,8 +536,8 @@ def main():
     st = Style(cfg)
     wb = Workbook()
     write_matrix(wb, st, facts, months, as_of, cfg)
-    write_missing(wb, st, rows, cfg, dedup)
-    write_unlisted(wb, st, facts, cfg)
+    write_missing(wb, st, rows, cfg, dedup, as_of)
+    write_unlisted(wb, st, facts, cfg, as_of)
     write_raw(wb, st, df, cfg)
 
     os.makedirs(a.out, exist_ok=True)
@@ -523,14 +548,45 @@ def main():
     save_state(rows, as_of, cfg)
 
     n = {g: sum(1 for r in rows if r["grade"] == g) for g in list(GRADE_ORDER) + ["해결"]}
-    print(f"기준일 {as_of} · 대상 월 1~{max(months)}월 · 모드 {cfg['grace']['mode']}")
-    print(f"총 {len(df)}건 / 매출분 제외 {excluded}건 / 상계쌍 {pairs}쌍")
+    span = f"{month_label(months[0], as_of)}~{month_label(months[-1], as_of)}"
+    print(f"기준일 {as_of} · 대상 월 {span} · 모드 {cfg['grace']['mode']}")
+    print(f"총 {len(df)}건 / 매출분 제외 {excluded}건 / 기간 밖 제외 {out_of_period}건 / "
+          f"상계쌍 {pairs}쌍")
     print(f"점검대상 {sum(1 for f in facts if f['listed'])}곳 / "
           f"대상외 {sum(1 for f in facts if not f['listed'])}곳")
     print(f"확인 필요 {n.get('확인 필요',0)} · 기한 전 {n.get('기한 전',0)} · "
           f"단발 {n.get('단발·비정기',0)} · 정상 {n.get('정상',0)} · 해결 {n.get('해결',0)}")
+    _print_deadline(facts, as_of, cfg)
+    _print_reco(facts, cfg)
     print(f"저장: {path}")
     return path
+
+
+def _print_deadline(facts, as_of, cfg):
+    """
+    발급기한 D-day. 지금까지는 메모 문자열 안에만 있어서, 리포트를 열지 않으면
+    '며칠 남았는지'가 전혀 안 보였다. 월 1~2회 실행에서 가장 먼저 봐야 할 숫자다.
+    """
+    pend = sorted({ym for f in facts if f["listed"] for ym in f["grace"]
+                   if ym != (as_of.year, as_of.month)})
+    if not pend:
+        return
+    ym = pend[0]
+    dl = deadline_for(ym[0], ym[1], cfg["grace"]["deadline_day"])
+    waiting = sum(1 for f in facts if f["listed"] and ym in f["grace"])
+    print(f"발급기한 임박: {month_label(ym, as_of)}분 기한 {dl} "
+          f"(D-{(dl - as_of).days}) · 아직 미수취 {waiting}곳")
+
+
+def _print_reco(facts, cfg):
+    """대상외 중 '추가 권장'. 시트를 안 열면 놓치므로 콘솔에도 띄운다."""
+    un = [f for f in facts if not f["listed"] and unlisted_reco(f, cfg)]
+    if not un:
+        return
+    print(f"vendors.json 추가 권장 {len(un)}곳:")
+    for f in sorted(un, key=lambda x: -x["net"]):
+        print(f"  {fmt_biz(f['biz_no'])} {f['name']} · {f['net']:,}원 · "
+              f"{unlisted_reco(f, cfg)}")
 
 
 if __name__ == "__main__":
