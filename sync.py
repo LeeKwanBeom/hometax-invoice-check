@@ -28,8 +28,8 @@ import urllib.request
 REPO = "LeeKwanBeom/hometax-invoice-check"
 BRANCH = "main"
 
-# 작업 디렉토리에 풀지 않을 것. 로컬에서만 쓰는 파일이라 받을 필요가 없다.
-SKIP = {".gitignore", "README.md"}
+# 작업 디렉토리에 풀지 않을 것. README.md 는 push --code 로 갱신할 수 있게 받아둔다.
+SKIP = {".gitignore"}
 SKIP_PREFIX = (".github/",)
 
 
