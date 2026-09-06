@@ -9,7 +9,8 @@ Claude 쪽에는 `SKILL.md` 하나만 설치하고, 실행할 때마다 여기�
 ## 설치
 
 1. 이 저장소를 **공개(public)** 로 둔다. (읽기에 토큰이 필요 없게)
-2. Claude 스킬 폴더에 `SKILL.md` 만 넣는다.
+2. Claude 스킬 폴더에 `SKILL.md` 만 넣는다. (저장소에도 같은 파일의 사본이
+   있어 버전은 남지만, 계정에 설치되는 건 직접 업로드해야 한다.)
 3. 끝. 나머지는 실행할 때 codeload tarball 로 받아온다.
 
 > `raw.githubusercontent.com` 은 5분간 캐시되므로 쓰지 않는다.
@@ -20,11 +21,14 @@ Claude 쪽에는 `SKILL.md` 하나만 설치하고, 실행할 때마다 여기�
 ```bash
 mkdir -p ~/hometax && cd ~/hometax
 curl -sL https://codeload.github.com/LeeKwanBeom/hometax-invoice-check/tar.gz/refs/heads/main | tar xz --strip-components=1
+pip install xlrd            # 홈택스 .xls 를 읽는 데 필요
 
 python3 scripts/check_input.py <홈택스파일폴더>
 python3 scripts/build_report.py --uploads <홈택스파일폴더> --out <출력폴더>
 python3 scripts/validate.py <출력폴더>/*.xlsx --uploads <홈택스파일폴더>
 ```
+
+`build_report.py` 에 `--as-of` / `--strict` 를 줬다면 `validate.py` 에도 똑같이 준다.
 
 ## 쓰기 권한이 필요한 것
 
