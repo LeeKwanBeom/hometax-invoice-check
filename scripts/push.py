@@ -9,7 +9,7 @@
   state    state/last-run.json          실행할 때마다 바뀜
   vendors  config/vendors.json          거래처 추가·수정할 때
   code     SKILL.md scripts/ config/check-config.json references/
-           tests/ audit/ sync.py README.md
+           tests/ audit/ install/ sync.py README.md
 
 기본값은 state + vendors 다. **코드를 고쳤으면 --code 를 반드시 붙인다.**
 
@@ -83,9 +83,10 @@ def _scan(rel):
     return sorted(out)
 
 
-# tests/ = 테스트 코드와 픽스처, audit/ = 점검 이력 메모(last-audit.md 등).
+# tests/ = 테스트 코드와 픽스처, audit/ = 점검 이력 메모(last-audit.md 등),
+# install/ = 설치용 얇은 부트스트랩 SKILL.md.
 # 파일명을 하나씩 적어두면 새로 만든 파일이 조용히 빠진다. 통째로 훑는다.
-GROUPS["code"] += _scan("tests") + _scan("audit")
+GROUPS["code"] += _scan("tests") + _scan("audit") + _scan("install")
 
 
 # ---------------------------------------------------------------- GitHub API
