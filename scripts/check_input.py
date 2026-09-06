@@ -151,6 +151,10 @@ def check_cycle(vendors, df, as_of, cfg):
     want = month_range(as_of)
     hits = []
     for v in vendors:
+        # 이미 종료로 확정한 곳은 주기를 따질 이유가 없다.
+        # 안 걸러내면 '거래 종료'인데 "'매월' 검토" 경고가 매달 다시 뜬다.
+        if v.get("until"):
+            continue
         sid = norm_biz(v["biz_no"])
         g = df[df["공급자번호"] == sid]
         got = sorted({ym for ym in zip(g["연"], g["월"]) if ym in set(want)})
@@ -161,7 +165,7 @@ def check_cycle(vendors, df, as_of, cfg):
             hits.append(f"{v['name']} · '{cyc}' 로 등록 · 실제 {n}개월 수취"
                         f"(최장 {run}개월 연속) → '매월' 검토")
         elif cyc == "매월" and len(want) >= 4 and n <= th["sporadic_max_months"] \
-                and not v.get("until") and not v.get("since"):
+                and not v.get("since"):
             hits.append(f"{v['name']} · '매월' 로 등록 · 실제 {n}개월 수취만"
                         f" → '비정기' 또는 until 검토")
     if hits:
