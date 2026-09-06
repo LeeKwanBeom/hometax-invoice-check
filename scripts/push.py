@@ -8,7 +8,7 @@
 
   state    state/last-run.json          실행할 때마다 바뀜
   vendors  config/vendors.json          거래처 추가·수정할 때
-  code     scripts/ config/ references/ sync.py  스킬 자체를 고쳤을 때
+  code     SKILL.md scripts/ config/ references/ tests/ sync.py README.md
 
 기본값은 state + vendors 다. **코드를 고쳤으면 --code 를 반드시 붙인다.**
 
@@ -45,6 +45,7 @@ GROUPS = {
     "state": ["state/last-run.json"],
     "vendors": ["config/vendors.json"],
     "code": [
+        "SKILL.md",
         "sync.py",
         "README.md",
         "config/check-config.json",
@@ -59,6 +60,21 @@ GROUPS = {
         "tests/test_edge_cases.py",
     ],
 }
+
+
+def _fixtures():
+    """
+    테스트 픽스처도 code 묶음이다. 목록에서 빠져 있으면 픽스처를 고쳐도
+    영영 저장소에 안 올라가고, 다음 sync 때 옛 파일로 덮여 되돌아간다.
+    """
+    d = os.path.join(ROOT, "tests", "fixtures")
+    if not os.path.isdir(d):
+        return []
+    return sorted(f"tests/fixtures/{f}" for f in os.listdir(d)
+                  if not f.startswith("."))
+
+
+GROUPS["code"] += _fixtures()
 
 
 # ---------------------------------------------------------------- GitHub API
@@ -135,10 +151,17 @@ def state_regressed(old, new):
     월 1~2회 · 여러 컴퓨터로 쓰는 스킬에서 실제로 밟기 쉬운 함정이라 막는다.
     """
     try:
-        o = json.loads(old.decode()) if old else {}
         n = json.loads(new.decode())
-    except Exception:
+    except Exception as e:
+        return f"로컬 이력 파일을 읽을 수 없습니다 ({e})"
+    if not old:
         return None
+    try:
+        o = json.loads(old.decode())
+    except Exception:
+        # 원격이 깨졌으면 '되돌아가는지' 판단할 근거가 없다.
+        # 그냥 통과시키면 가드가 있으나 마나가 된다.
+        return "원격 이력 파일이 깨져 있어 비교할 수 없습니다"
     od, nd = o.get("run_date"), n.get("run_date")
     if od and not nd:
         return f"원격에는 {od} 이력이 있는데 로컬은 비어 있습니다"
