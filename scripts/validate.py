@@ -10,7 +10,10 @@
 열이 하나만 추가돼도 엉뚱한 칸을 검사하게 된다.
 
 사용법:
-    python scripts/validate.py <출력.xlsx> [--uploads DIR] [--as-of YYYY-MM-DD]
+    python scripts/validate.py <출력.xlsx> [--uploads DIR] [--as-of YYYY-MM-DD] [--strict]
+
+build_report.py 에 준 `--as-of` / `--strict` 는 **여기에도 똑같이 준다.**
+안 주면 검증기가 다른 기준으로 판단해서 멀쩡한 산출물에 FAIL 을 낸다.
 """
 import argparse
 import os
@@ -164,6 +167,41 @@ def check_raw_rows(wb, cfg, df):
         rec(PASS, "원본 행수", f"{got}건")
 
 
+def check_no_duplicates(wb, cfg):
+    """
+    원본정제데이터의 승인번호 중복. 같은 구간 파일을 두 번 올린 경우를 잡는다.
+
+    check_input.py 에도 같은 검사가 있지만, 그 단계를 건너뛰면 리포트가
+    오류 없이 만들어지고 금액이 부풀려진 채 그대로 나간다(441건 → 521건,
+    상계쌍 6 → 8쌍). 산출물만 보고도 잡히도록 여기서 한 번 더 본다.
+    원본 행수 검사는 산출물을 자기 입력과 비교하므로 이 경우를 못 잡는다.
+    """
+    ws = wb[cfg["sheets"]["raw"]]
+    r, m = find_header_row(ws, ["승인번호"])
+    if not r:
+        rec(FAIL, "승인번호 중복", "'승인번호' 열을 못 찾음 — 중복 검사를 못 했다")
+        return
+    col = m["승인번호"]
+    seen, dup = set(), []
+    for i in range(r + 1, ws.max_row + 1):
+        v = ws.cell(i, col).value
+        if v is None or str(v).strip() == "":
+            continue
+        v = str(v).strip()
+        if v in seen:
+            dup.append(v)
+        seen.add(v)
+    if not seen:
+        rec(FAIL, "승인번호 중복", "승인번호가 한 건도 없음 — 검사 대상을 못 찾았다")
+    elif dup:
+        rec(FAIL, f"승인번호 중복 {len(dup)}건",
+            "같은 구간 홈택스 파일을 두 번 올렸을 가능성이 높다.\n"
+            "그대로 두면 금액과 상계쌍이 부풀려진다. 중복분을 빼고 다시 만들 것.\n" +
+            "\n".join(dup[:10]))
+    else:
+        rec(PASS, "승인번호 중복", f"{len(seen)}건 전부 고유")
+
+
 def check_grace(wb, cfg, as_of):
     """유예 판정이 실제로 작동했는지. auto 모드인데 유예 칸이 0이면 의심."""
     if cfg["grace"]["mode"] != "auto":
@@ -233,10 +271,15 @@ def main():
     ap.add_argument("xlsx")
     ap.add_argument("--uploads", default="/mnt/user-data/uploads")
     ap.add_argument("--as-of", default=None)
+    ap.add_argument("--strict", action="store_true",
+                    help="build_report.py 를 --strict 로 만든 산출물을 검증할 때. "
+                         "빼먹으면 '기한 전' 0건을 유예 로직 고장으로 오판해 FAIL 이 난다")
     a = ap.parse_args()
     as_of = date.fromisoformat(a.as_of) if a.as_of else date.today()
 
     cfg = load_config()
+    if a.strict:
+        cfg["grace"]["mode"] = "strict"
     vendors = load_vendors()
     wb = load_workbook(a.xlsx)
     df, _ = load_uploads(a.uploads, cfg)
@@ -251,6 +294,7 @@ def main():
     check_vendor_coverage(wb, cfg, vendors)
     check_totals(wb, cfg, df)
     check_raw_rows(wb, cfg, df)
+    check_no_duplicates(wb, cfg)
     check_grace(wb, cfg, as_of)
 
     print(f"\n산출물 검증 · {os.path.basename(a.xlsx)} · 기준일 {as_of}\n" + "=" * 68)
