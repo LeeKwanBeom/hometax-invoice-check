@@ -10,14 +10,16 @@ Claude 쪽에는 `SKILL.md` 하나만 설치하고, 실행할 때마다 여기�
 
 1. 이 저장소를 **공개(public)** 로 둔다. (읽기에 토큰이 필요 없게)
 2. Claude 스킬 폴더에 `SKILL.md` 만 넣는다.
-3. 끝. 나머지는 실행할 때 `sync.py` 가 받아온다.
+3. 끝. 나머지는 실행할 때 codeload tarball 로 받아온다.
+
+> `raw.githubusercontent.com` 은 5분간 캐시되므로 쓰지 않는다.
+> push 직후 다시 받으면 옛 파일이 내려온다. codeload 는 캐시되지 않는다.
 
 ## 수동 실행
 
 ```bash
 mkdir -p ~/hometax && cd ~/hometax
-curl -sL https://raw.githubusercontent.com/LeeKwanBeom/hometax-invoice-check/main/sync.py -o sync.py
-python3 sync.py .
+curl -sL https://codeload.github.com/LeeKwanBeom/hometax-invoice-check/tar.gz/refs/heads/main | tar xz --strip-components=1
 
 python3 scripts/check_input.py <홈택스파일폴더>
 python3 scripts/build_report.py --uploads <홈택스파일폴더> --out <출력폴더>
@@ -26,11 +28,12 @@ python3 scripts/validate.py <출력폴더>/*.xlsx --uploads <홈택스파일폴�
 
 ## 쓰기 권한이 필요한 것
 
-`config/vendors.json`(거래처 목록)과 `state/last-run.json`(실행 이력)은
-실행하면서 바뀌므로 저장소에 되돌려 올려야 한다.
+`config/vendors.json`(거래처 목록), `state/last-run.json`(실행 이력),
+그리고 대화 중에 고친 코드는 저장소에 되돌려 올려야 남는다.
 
 ```bash
-python3 scripts/push.py <GitHub 토큰>
+python3 scripts/push.py <토큰>          # 이력·거래처
+python3 scripts/push.py <토큰> --code   # 코드까지
 ```
 
 토큰: Settings → Developer settings → Fine-grained tokens,
@@ -40,11 +43,11 @@ python3 scripts/push.py <GitHub 토큰>
 ## 고친 뒤에는
 
 ```bash
-python3 sync.py . --with-tests
 python3 tests/test_edge_cases.py
+python3 scripts/push.py <토큰> --code
 ```
 
-전부 통과하지 않으면 올리지 않는다.
+`push.py --code` 는 테스트를 먼저 돌리고 **실패하면 올리지 않는다.**
 
 ## 문서
 
