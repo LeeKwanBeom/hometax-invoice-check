@@ -1,101 +1,119 @@
 """
 저장소에서 스킬 코드·설정을 작업 디렉토리로 내려받는다.
 
-이 스크립트만 SKILL.md 의 curl 한 줄로 받아오면, 나머지는 여기서 전부 처리한다.
+이 스크립트만 SKILL.md 의 curl 한 줄로 받아오면 나머지는 여기서 처리한다.
 컨테이너가 초기화되어도, 다른 컴퓨터에서 실행해도 항상 저장소 최신본을 쓴다.
 
+## 왜 tarball 인가
+
+raw.githubusercontent.com 은 **5분간 캐시된다**(`cache-control: max-age=300`).
+push.py 로 코드를 올린 직후 다시 sync 하면 옛 파일이 내려온다.
+`?t=타임스탬프` 같은 캐시버스터도 통하지 않는다.
+
+codeload 의 tarball 은 캐시되지 않고, 요청 한 번으로 저장소 전체를 받는다.
+파일별로 18번 요청하던 것보다 빠르고, 중간에 일부만 받아지는 일도 없다.
+
 사용법:
-    python3 sync.py [작업디렉토리]        # 기본 현재 디렉토리
-    python3 sync.py --check              # 받아진 파일만 점검
+    python3 sync.py [작업디렉토리] [--token TOKEN] [--ref main|<커밋SHA>]
 """
+import argparse
+import io
 import os
+import shutil
 import sys
+import tarfile
 import urllib.error
 import urllib.request
 
 REPO = "LeeKwanBeom/hometax-invoice-check"
 BRANCH = "main"
-RAW = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}"
 
-# 저장소에서 받아올 파일. tests/fixtures 는 용량이 커서 --with-tests 일 때만 받는다.
-CORE = [
-    "config/check-config.json",
-    "config/vendors.json",
-    "references/column-mapping.md",
-    "references/judgment-rules.md",
-    "references/excel-format.md",
-    "scripts/common.py",
-    "scripts/check_input.py",
-    "scripts/build_report.py",
-    "scripts/validate.py",
-    "scripts/push.py",
-]
-STATE = ["state/last-run.json"]          # 없을 수 있음(최초 실행)
-TESTS = [
-    "tests/test_edge_cases.py",
-    "tests/fixtures/매입전자세금계산서목록_1_150_.xls",
-    "tests/fixtures/매입전자세금계산서목록_1_132_.xls",
-    "tests/fixtures/매입전자세금계산서목록_1_80_.xls",
-    "tests/fixtures/매입전자계산서목록_1_30_.xls",
-    "tests/fixtures/매입전자계산서목록_1_33_.xls",
-    "tests/fixtures/매입전자계산서목록_1_16_.xls",
-]
+# 작업 디렉토리에 풀지 않을 것. 로컬에서만 쓰는 파일이라 받을 필요가 없다.
+SKIP = {".gitignore", "README.md"}
+SKIP_PREFIX = (".github/",)
 
 
-def fetch(path, dest, optional=False):
-    url = f"{RAW}/{urllib.request.quote(path)}"
+def fetch_tarball(ref, token):
+    url = f"https://codeload.github.com/{REPO}/tar.gz/{ref}"
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(url, timeout=30) as r:
-            data = r.read()
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
     except urllib.error.HTTPError as e:
-        if optional and e.code == 404:
-            return None
-        raise SystemExit(
-            f"[중단] {path} 를 받지 못했습니다 (HTTP {e.code}).\n"
-            f"       {url}\n"
-            f"       저장소가 공개인지, 파일이 올라가 있는지 확인하세요."
-        )
+        if e.code == 404:
+            raise SystemExit(
+                f"[중단] 저장소나 브랜치를 찾을 수 없습니다 (404).\n"
+                f"       {REPO} @ {ref}\n"
+                f"       저장소가 공개인지, 파일이 올라가 있는지 확인하세요.\n"
+                f"       비공개 저장소라면 --token 이 필요합니다."
+            )
+        raise SystemExit(f"[중단] 다운로드 실패 HTTP {e.code}\n       {url}")
     except Exception as e:
         raise SystemExit(
-            f"[중단] 네트워크 오류로 {path} 를 받지 못했습니다: {e}\n"
-            f"       raw.githubusercontent.com 접근이 막혀 있으면 설정에서 허용해야 합니다."
+            f"[중단] 네트워크 오류: {e}\n"
+            f"       codeload.github.com 접근이 막혀 있으면 설정에서 허용해야 합니다."
         )
-    if len(data) == 0:
-        raise SystemExit(f"[중단] {path} 가 0바이트입니다. 저장소 파일을 확인하세요.")
-    full = os.path.join(dest, path)
-    os.makedirs(os.path.dirname(full), exist_ok=True)
-    with open(full, "wb") as f:
-        f.write(data)
-    return len(data)
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    dest = os.path.abspath(args[0]) if args else os.getcwd()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dest", nargs="?", default=None)
+    ap.add_argument("--token", default=None, help="비공개 저장소일 때만 필요")
+    ap.add_argument("--ref", default=f"refs/heads/{BRANCH}",
+                    help="브랜치 또는 커밋 SHA. 기본 main")
+    # 예전 버전 호환. tarball 은 어차피 전부 받으므로 무시한다.
+    ap.add_argument("--with-tests", action="store_true", help=argparse.SUPPRESS)
+    a = ap.parse_args()
+
+    dest = os.path.abspath(a.dest) if a.dest else os.getcwd()
     os.makedirs(dest, exist_ok=True)
 
-    want = list(CORE)
-    if "--with-tests" in flags:
-        want += TESTS
-
-    print(f"저장소: {REPO}@{BRANCH}")
+    print(f"저장소: {REPO} @ {a.ref}")
     print(f"대상:   {dest}\n")
 
-    total = 0
-    for p in want:
-        n = fetch(p, dest)
-        total += n
-        print(f"  받음  {p}  ({n:,}B)")
+    blob = fetch_tarball(a.ref, a.token)
+    print(f"  받음  {len(blob):,}B (압축)")
 
-    for p in STATE:
-        n = fetch(p, dest, optional=True)
-        if n is None:
-            print(f"  없음  {p}  (최초 실행이면 정상)")
-        else:
-            print(f"  받음  {p}  ({n:,}B)")
+    written, skipped = [], []
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
+        members = [m for m in tf.getmembers() if m.isfile()]
+        if not members:
+            raise SystemExit("[중단] 압축 파일이 비어 있습니다. 저장소를 확인하세요.")
+        # 최상위 디렉토리(<repo>-<ref>/) 를 벗겨낸다
+        root = members[0].name.split("/")[0] + "/"
 
-    print(f"\n총 {total:,}B · 준비 완료")
+        for m in members:
+            rel = m.name[len(root):] if m.name.startswith(root) else m.name
+            if not rel or rel in SKIP or rel.startswith(SKIP_PREFIX):
+                skipped.append(rel)
+                continue
+            # 경로 탈출 방어
+            full = os.path.normpath(os.path.join(dest, rel))
+            if not full.startswith(os.path.normpath(dest) + os.sep):
+                raise SystemExit(f"[중단] 비정상 경로: {rel}")
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            src = tf.extractfile(m)
+            if src is None:
+                continue
+            with open(full, "wb") as f:
+                shutil.copyfileobj(src, f)
+            written.append((rel, m.size))
+
+    written.sort()
+    for rel, size in written:
+        print(f"        {rel}  ({size:,}B)")
+
+    need = ["config/check-config.json", "config/vendors.json",
+            "scripts/common.py", "scripts/build_report.py",
+            "scripts/check_input.py", "scripts/validate.py", "scripts/push.py"]
+    missing = [p for p in need if not os.path.exists(os.path.join(dest, p))]
+    if missing:
+        raise SystemExit(f"\n[중단] 필수 파일이 없습니다: {missing}\n"
+                         f"       저장소에 제대로 올라갔는지 확인하세요.")
+
+    print(f"\n{len(written)}개 파일 · 준비 완료")
     print(f"다음: cd {dest} && python3 scripts/check_input.py /mnt/user-data/uploads")
 
 
