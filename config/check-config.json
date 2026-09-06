@@ -62,15 +62,10 @@
   },
 
   "format": {
+    "_comment": "틀고정(freeze)은 여기에 두지 않는다. 제목 줄·신고기 밴드 때문에 헤더 행 번호가 시트마다 다르고 실행 시점에 따라 달라져서, 값으로 적어두면 반드시 어긋난다(실제로 matrix가 C5로 적혀 있었으나 코드는 D6을 썼다). 코드가 헤더 행 바로 아래로 계산해서 적용한다.",
     "font": "Arial",
     "money": "#,##0",
-    "date": "yyyy-mm-dd",
-    "freeze": {
-      "matrix": "C5",
-      "missing": "A4",
-      "unlisted": "A4",
-      "raw": "A2"
-    }
+    "date": "yyyy-mm-dd"
   },
 
   "sheets": {
