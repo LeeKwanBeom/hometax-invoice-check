@@ -22,7 +22,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from common import (SKILL_DIR, _load_json, load_config, load_vendors, load_uploads,
-                    match_offsets, live_rows, norm_biz, fmt_biz,
+                    match_offsets, drop_split_offsets, live_rows, norm_biz, fmt_biz,
                     month_range, month_label, clip_period,
                     is_in_grace, deadline_for, vat_period_of)
 
@@ -159,8 +159,13 @@ def grade_all(facts, as_of, cfg):
                 f"{_pat(f, as_of)} · {_grace_note(pending, as_of, cfg)}", []
         elif not f["missing"] and not f["cancelled"]:
             grade, memo, gap = "정상", f"{_pat(f, as_of)} · 결번 없음 · 발행일이 월초라 당월분 미도래", []
-        elif f["months_got"] <= cfg["thresholds"]["sporadic_max_months"]:
-            grade, memo, gap = "단발·비정기", f"{_pat(f, as_of)} · 정기 거래 아님 → 경과일 기준 무의미", []
+        elif f["cycle"] == "비정기" or f["months_got"] <= cfg["thresholds"]["sporadic_max_months"]:
+            # cycle 을 안 보면 '비정기' 로 등록해둔 거래처도 수취 월수가 임계를 넘는
+            # 순간 결번마다 확인 필요로 올라온다. 연말로 갈수록 대부분 넘기 때문에
+            # vendors.json 의 '비정기' 라벨이 사실상 아무 일도 안 하게 된다.
+            why = ("vendors.json 에 '비정기' 로 등록" if f["cycle"] == "비정기"
+                   else "정기 거래 아님")
+            grade, memo, gap = "단발·비정기", f"{_pat(f, as_of)} · {why} → 경과일 기준 무의미", []
         else:
             grade, memo, gap = "확인 필요", f"{_pat(f, as_of)} · 연속 수취 후 중단됨", f["missing"]
         rows.append(_row(f"C. 최종수취 {cfg['thresholds']['stale_days']}일 경과",
@@ -255,13 +260,22 @@ def apply_state(rows, prev, as_of, cfg):
             r["status"] = "신규"
 
     if cfg["state"]["resolved_shown_once"]:
+        # 이번 회차에 다른 등급으로 이미 나온 거래처는 행을 새로 만들지 않고
+        # 그 행의 상태만 '해결' 로 바꾼다. 새로 만들면 같은 곳이 두 줄이 되고,
+        # 메모가 '이번엔 정상' 이라고 거짓말한다(실제로는 until 을 넣어서
+        # '거래 종료' 로 내려간 것이다).
+        by_id = {r["biz_no"]: r for r in rows}
         for bid, p in prev_map.items():
-            if bid not in now_ids:
-                rows.append({"kind": "해결됨", "grade": "해결", "biz_no": bid,
-                             "name": p.get("name", ""), "cycle": "", "gap": [],
-                             "last": None, "status": "해결",
-                             "memo": f"직전 실행({(prev or {}).get('run_date','')})에서 '{p.get('reason','')}' 로 잡혔으나 이번엔 정상",
-                             "note": "", "first_seen": None})
+            if bid in now_ids:
+                continue
+            if bid in by_id:
+                by_id[bid]["status"] = "해결"
+                continue
+            rows.append({"kind": "해결됨", "grade": "해결", "biz_no": bid,
+                         "name": p.get("name", ""), "cycle": "", "gap": [],
+                         "last": None, "status": "해결",
+                         "memo": f"직전 실행({(prev or {}).get('run_date','')})에서 '{p.get('reason','')}' 로 잡혔으나 이번엔 정상",
+                         "note": "", "first_seen": None})
     return rows
 
 
@@ -521,6 +535,10 @@ def main():
     mine_rows = df_all[df_all["받는자번호"] == mine]
     df = clip_period(mine_rows, months, as_of)
     out_of_period = len(mine_rows) - len(df)
+    # 짝의 한쪽이 기간 밖으로 잘려나간 상계는 표시를 해제한다.
+    # 안 하면 남은 쪽이 죽은 건으로 세어져 정상 수취분이 '전액취소' 로 오판된다.
+    split = drop_split_offsets(df)
+    pairs = int((df["상계"] == "취소분(상계)").sum())
 
     facts, months = build_facts(df, vendors, as_of, cfg)
     rows = grade_all(facts, as_of, cfg)
@@ -551,7 +569,7 @@ def main():
     span = f"{month_label(months[0], as_of)}~{month_label(months[-1], as_of)}"
     print(f"기준일 {as_of} · 대상 월 {span} · 모드 {cfg['grace']['mode']}")
     print(f"총 {len(df)}건 / 매출분 제외 {excluded}건 / 기간 밖 제외 {out_of_period}건 / "
-          f"상계쌍 {pairs}쌍")
+          f"상계쌍 {pairs}쌍" + (f" / 짝이 기간 밖 {split}건" if split else ""))
     print(f"점검대상 {sum(1 for f in facts if f['listed'])}곳 / "
           f"대상외 {sum(1 for f in facts if not f['listed'])}곳")
     print(f"확인 필요 {n.get('확인 필요',0)} · 기한 전 {n.get('기한 전',0)} · "
