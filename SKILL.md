@@ -69,6 +69,10 @@ push 직후 다시 받으면 옛 파일이 내려온다. codeload 는 캐시되�
 판정 논리나 서식 규격을 이해해야 하면 `references/` 안의 문서를 읽는다.
 특히 등급 판정을 손보기 전에는 `references/judgment-rules.md` 를 먼저 읽는다.
 
+`audit/last-audit.md` 가 있으면 **함께 읽는다.** 직전 점검 기준선이고, 알려진
+미해결 결함과 "다음 점검에서 먼저 볼 것" 이 적혀 있다. 결과가 이상해 보이거나
+스킬을 고치기 전에 먼저 보면, 이미 알려진 문제를 다시 찾느라 시간을 쓰지 않는다.
+
 ### 2단계. 파일 확인
 
 사용자에게 받아야 할 것:
@@ -177,21 +181,28 @@ python3 scripts/validate.py <파일>.xlsx --uploads /mnt/user-data/uploads --str
 |---|---|---|
 | `state` | `state/last-run.json` | 실행할 때마다 (기본 포함) |
 | `vendors` | `config/vendors.json` | 거래처 추가·수정 (기본 포함) |
-| `code` | `SKILL.md`, `scripts/`, `config/check-config.json`, `references/`, `tests/`, `audit/`, `sync.py`, `README.md` | **스킬 자체를 고쳤을 때. `--code` 필수** |
+| `code` | `SKILL.md`, `install/SKILL.md`, `scripts/`, `config/check-config.json`, `references/`, `tests/`, `audit/`, `sync.py`, `README.md` | **스킬 자체를 고쳤을 때. `--code` 필수** |
 
-`tests/` 와 `audit/` 는 파일명을 적어두지 않고 디렉토리째 훑는다. 새 파일을
+`tests/`·`audit/`·`install/` 은 파일명을 적어두지 않고 디렉토리째 훑는다. 새 파일을
 만들어도 목록을 고칠 필요가 없다. 없는 디렉토리는 그냥 건너뛴다.
 
-`SKILL.md` 도 저장소에 있고 `--code` 로 함께 올라간다. **두 곳을 다 고쳐야 한다.**
+`SKILL.md` 도 저장소에 있고 `--code` 로 함께 올라간다.
 
 | 위치 | 무엇 | 어떻게 |
 |---|---|---|
-| 저장소 `SKILL.md` | 버전 이력 | `push.py --code` |
-| `/mnt/skills/plugins/hometax-invoice-check/SKILL.md` | 실제로 읽히는 설명서 | 이 경로에 직접 쓴다 |
+| 저장소 `SKILL.md` | **정본 설명서** | `push.py --code` |
+| 저장소 `install/SKILL.md` | 설치용 부트스트랩 문구 | `push.py --code` |
+| `/mnt/skills/plugins/hometax-invoice-check/SKILL.md` | 자동으로 읽히는 파일 | **직접 쓰지 말 것** (아래) |
 
-이 경로는 **쓰기 가능하다.** 사용자에게 재업로드를 시키지 말고 직접 반영한다.
-저장소만 올리면 다음 대화에서 읽히는 건 여전히 옛 버전이다.
-쓰고 나면 `view` 로 다시 열어 반영됐는지 눈으로 확인한 뒤에 "완료"라고 말한다.
+**설치 경로에 직접 쓰지 않는다.** 쓰기는 되지만 **세션 간 보존되지 않는다.**
+이 경로는 매 세션 패키지에서 다시 풀린다(2026-09-06 실측: 전날 덮어쓴
+SKILL.md 가 옛 버전으로 되돌아가 있었고, 같이 둔 `audit/` 파일도 사라졌다).
+거기 쓰는 수정은 이번 대화에서만 보이고 다음 세션에 없어진다.
+
+설치본을 바꿔야 하면 저장소 `install/SKILL.md` 를 고쳐 push 한 뒤,
+**사용자가 Claude 설정에서 스킬을 재업로드해야 한다.** 이건 대신 해줄 수 없다.
+그래서 설치본은 절차를 담지 않는 얇은 부트스트랩으로 유지한다 — 바뀔 일이
+없어야 재업로드도 필요 없다.
 
 토큰이 아직 없으면:
 
@@ -343,5 +354,6 @@ scripts/validate.py        산출물 검증
 scripts/push.py            state·vendors·code 저장소 반영
 state/last-run.json        직전 실행 결과 (자동 생성)
 tests/                     엣지케이스 테스트 + 샘플 파일
-audit/                     점검 이력 메모 (선택. 있으면 --code 로 함께 올라간다)
+audit/last-audit.md        직전 점검 기준선 (1단계에서 함께 읽는다)
+install/SKILL.md           설치용 얇은 부트스트랩. 이걸 스킬에 재업로드한다
 ```
