@@ -154,10 +154,16 @@ python3 scripts/validate.py <파일>.xlsx --uploads /mnt/user-data/uploads --str
 | `vendors` | `config/vendors.json` | 거래처 추가·수정 (기본 포함) |
 | `code` | `SKILL.md`, `scripts/`, `config/check-config.json`, `references/`, `tests/`, `sync.py`, `README.md` | **스킬 자체를 고쳤을 때. `--code` 필수** |
 
-`SKILL.md` 도 저장소에 있고 `--code` 로 함께 올라간다. 다만 **저장소에 올리는 것과
-계정에 설치되는 것은 다르다.** 이 파일을 고쳤으면 저장소에 올린 뒤,
-`present_files` 로 건네주고 **계정에 재업로드**하도록 안내한다. 안 그러면
-저장소만 최신이고 실제로 실행되는 설명서는 옛 버전이다.
+`SKILL.md` 도 저장소에 있고 `--code` 로 함께 올라간다. **두 곳을 다 고쳐야 한다.**
+
+| 위치 | 무엇 | 어떻게 |
+|---|---|---|
+| 저장소 `SKILL.md` | 버전 이력 | `push.py --code` |
+| `/mnt/skills/plugins/hometax-invoice-check/SKILL.md` | 실제로 읽히는 설명서 | 이 경로에 직접 쓴다 |
+
+이 경로는 **쓰기 가능하다.** 사용자에게 재업로드를 시키지 말고 직접 반영한다.
+저장소만 올리면 다음 대화에서 읽히는 건 여전히 옛 버전이다.
+쓰고 나면 `view` 로 다시 열어 반영됐는지 눈으로 확인한 뒤에 "완료"라고 말한다.
 
 토큰이 아직 없으면:
 
@@ -280,7 +286,7 @@ python3 scripts/push.py <토큰> --code
 ## 저장소 구성
 
 ```
-SKILL.md                   이 파일. 저장소에도 사본이 있다(계정에는 따로 업로드)
+SKILL.md                   이 파일. 저장소 사본이며, 설치 경로에도 함께 반영한다
 README.md                  저장소 소개
 sync.py                    재동기화용 (최초 받기는 curl+tar 한 줄로 한다)
 config/check-config.json   임계값·색상·시트명 (단일 출처)
