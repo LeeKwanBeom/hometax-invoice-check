@@ -129,6 +129,24 @@ def same(a, b):
     return a.replace(b"\r\n", b"\n") == b.replace(b"\r\n", b"\n")
 
 
+def state_regressed(old, new):
+    """
+    sync 하지 않은 폴더에서 push 하면 원격의 최신 이력을 옛 것으로 덮어쓴다.
+    월 1~2회 · 여러 컴퓨터로 쓰는 스킬에서 실제로 밟기 쉬운 함정이라 막는다.
+    """
+    try:
+        o = json.loads(old.decode()) if old else {}
+        n = json.loads(new.decode())
+    except Exception:
+        return None
+    od, nd = o.get("run_date"), n.get("run_date")
+    if od and not nd:
+        return f"원격에는 {od} 이력이 있는데 로컬은 비어 있습니다"
+    if od and nd and nd < od:
+        return f"원격 {od} → 로컬 {nd} 로 되돌아갑니다"
+    return None
+
+
 def diff_lines(old, new, path):
     """텍스트 파일이면 몇 줄이 바뀌었는지 요약한다."""
     if path.endswith((".xls", ".xlsx", ".png")):
@@ -179,6 +197,8 @@ def main():
     ap.add_argument("--skip-tests", action="store_true",
                     help="테스트 없이 코드 올리기 (권장하지 않음)")
     ap.add_argument("--message", default=None, help="커밋 메시지")
+    ap.add_argument("--force", action="store_true",
+                    help="실행 이력이 뒤로 가도 강행 (이력이 지워짐)")
     a = ap.parse_args()
 
     if a.only:
@@ -203,6 +223,15 @@ def main():
             sha, old = remote(path, a.token)
             if same(old, content):
                 continue
+            if path == "state/last-run.json":
+                back = state_regressed(old, content)
+                if back and not a.force:
+                    raise SystemExit(
+                        f"[중단] 실행 이력이 뒤로 갑니다: {back}\n"
+                        f"       sync 하지 않은 폴더에서 push 하면 원격 이력이 지워집니다.\n"
+                        f"       저장소에서 최신본을 받은 폴더에서 다시 실행하세요.\n"
+                        f"       정말 덮어써야 하면 --force 를 붙이세요."
+                    )
             changed.append((path, content, sha, "신규" if old is None
                             else diff_lines(old, content, path)))
 
