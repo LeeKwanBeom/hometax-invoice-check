@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+# 토큰·산출물은 절대 커밋하지 않는다
+*.token
+token.txt
+outputs/
+*.xlsx
+!tests/fixtures/*.xls
