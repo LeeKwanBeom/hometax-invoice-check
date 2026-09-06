@@ -5,21 +5,22 @@
     "_comment": "사업자번호는 하이픈 없는 숫자 10자리로 저장한다. 표시용 하이픈은 코드가 붙인다.",
     "biz_no": "2398603249",
     "name": "주식회사 강한컴퍼니",
-    "brands": ["김치찜의 정석", "참제육", "퍽퍽살이 싫어 내가 만든 곱도리탕"]
+    "_brands": ["김치찜의 정석", "참제육", "퍽퍽살이 싫어 내가 만든 곱도리탕"]
   },
 
   "thresholds": {
-    "_comment": "판정 기준. 여기만 고치면 전체에 반영된다.",
+    "_comment": "판정 기준. 여기만 고치면 전체에 반영된다. unlisted_recommend_* 는 대상외공급자 시트에서 vendors.json 추가를 권할 기준(수취 월수 또는 순공급가액).",
     "stale_days": 30,
     "monthly_min_months": 6,
-    "sporadic_max_months": 2
+    "sporadic_max_months": 2,
+    "unlisted_recommend_months": 3,
+    "unlisted_recommend_amount": 3000000
   },
 
   "grace": {
     "_comment": "발급기한 판정 유예. 작성월 다음 달 deadline_day 까지는 미수취로 확정하지 않는다. mode=auto 권장, strict 는 유예 없이 전부 미수취(부가세 신고 직전 최종 점검용).",
     "mode": "auto",
-    "deadline_day": 10,
-    "label": "기한 전(판정 유예)"
+    "deadline_day": 10
   },
 
   "vat_period": {
@@ -44,8 +45,7 @@
     "required_columns": [
       "작성일자", "승인번호", "공급자사업자등록번호", "상호",
       "공급받는자사업자등록번호", "합계금액", "공급가액"
-    ],
-    "expected_gap_days": 1
+    ]
   },
 
   "colors": {
@@ -54,7 +54,6 @@
     "header_font": "FFFFFF",
     "cancelled": "FFEB9C",
     "grade_action": "FFC7CE",
-    "grade_check": "FCE4D6",
     "grade_normal": "E7E6E6",
     "grade_grace": "DDEBF7",
     "grade_sporadic": null,
