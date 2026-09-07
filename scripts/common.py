@@ -144,6 +144,26 @@ def is_in_grace(year, month, as_of, cfg):
     return as_of <= deadline_for(year, month, g["deadline_day"])
 
 
+def until_passed(until, as_of):
+    """
+    vendors.json 의 until(YYYY-MM) 이 실행일 기준으로 **이미 지났는가.**
+
+    거래 종료 판정의 단일 기준이다. build_report(등급 판정) 와 check_input(cycle 검사)
+    이 이 함수 하나를 쓴다. 6차 후속에서 두 스크립트가 각자 다른 규칙
+    (한쪽은 "until 값이 있으면 종료", 다른 쪽은 "until 이 지났으면 종료") 을 써서
+    1월 실행에 4~7월 종료 예정 거래처가 '거래 종료' 로 빠지는 불일치가 생겼다.
+    until 이 미래면 아직 거래 중이므로 결번 판정과 주기 검사를 그대로 받는다.
+    없거나 형식이 깨지면 False (= 종료 아님).
+    """
+    if not until:
+        return False
+    try:
+        y, m = (int(x) for x in str(until).split("-")[:2])
+    except (ValueError, TypeError):
+        return False
+    return (y, m) < (as_of.year, as_of.month)
+
+
 def is_resolved(grade, status):
     """
     '해결' 인가. **등급과 상태 두 곳에 나뉘어 표기된다.**
