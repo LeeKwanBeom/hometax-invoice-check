@@ -233,11 +233,20 @@ def run_tests():
 
 # ---------------------------------------------------------------- main
 
+_DRY_NOTE = ("\n  dry-run 이라 {f} 를 **쓰지 않았습니다.** 위는 예정 목록입니다.\n"
+             "  실제로 반영하려면 --dry-run 없이 다시 실행하세요.")
+
+
 def edit_vendor_lists(a):
     """--add-vendor / --ignore-vendor 처리. 바꾼 항목 수를 돌려준다.
 
     대상외 시트를 열어 손으로 옮겨 적는 과정을 없애는 게 목적이다.
     build_report 가 콘솔에 찍는 '추가 권장' 목록의 번호를 그대로 붙이면 된다.
+
+    --dry-run 이면 무엇이 바뀔지 화면에만 찍고 파일은 건드리지 않는다.
+    예전에는 dry-run 이어도 vendors.json / check-config.json 을 실제로 써서,
+    미리보기인 줄 알고 돌린 사람이 이미 바뀐 파일을 갖게 됐다.
+    이때는 0 을 돌려 push 단계로 넘어가지 않는다(올릴 변경이 없다).
     """
     if a.add_vendor and a.ignore_vendor:
         print("[중단] --add-vendor 와 --ignore-vendor 는 같이 쓸 수 없습니다.")
@@ -261,6 +270,11 @@ def edit_vendor_lists(a):
             added.append(sid)
         if not added:
             print("[중단] 추가된 거래처가 없습니다.")
+            return 0
+        if a.dry_run:
+            for sid in added:
+                print(f"  추가 예정  {fmt_biz(sid)} · cycle={a.cycle}")
+            print(_DRY_NOTE.format(f="config/vendors.json"))
             return 0
         json.dump(d, open(vp, "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
@@ -286,6 +300,11 @@ def edit_vendor_lists(a):
         new.append(sid)
     if not new:
         print("[중단] 제외 목록에 추가된 항목이 없습니다.")
+        return 0
+    if a.dry_run:
+        for sid in new:
+            print(f"  제외 예정  {fmt_biz(sid)} — '추가 권장' 재권유를 끕니다")
+        print(_DRY_NOTE.format(f="config/check-config.json"))
         return 0
     d["ignore_suppliers"] = cur
     json.dump(d, open(cp, "w", encoding="utf-8"),
@@ -321,7 +340,9 @@ def main():
     if a.add_vendor or a.ignore_vendor:
         n = edit_vendor_lists(a)
         if n == 0:
-            return 1
+            # dry-run 은 예정 목록만 찍고 끝난다. 파일을 안 썼으니 올릴 것도 없고,
+            # 실패가 아니므로 0 으로 끝낸다.
+            return 0 if a.dry_run else 1
         # 목록만 고치고 끝내지 않는다. 고친 파일이 올라가야 다음 회차에 반영된다.
         if not a.only and not a.code:
             a.only = "vendors" if a.add_vendor else "code"
