@@ -31,10 +31,14 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import fmt_biz
 
 REPO = "LeeKwanBeom/hometax-invoice-check"
 BRANCH = "main"
@@ -229,6 +233,68 @@ def run_tests():
 
 # ---------------------------------------------------------------- main
 
+def edit_vendor_lists(a):
+    """--add-vendor / --ignore-vendor 처리. 바꾼 항목 수를 돌려준다.
+
+    대상외 시트를 열어 손으로 옮겨 적는 과정을 없애는 게 목적이다.
+    build_report 가 콘솔에 찍는 '추가 권장' 목록의 번호를 그대로 붙이면 된다.
+    """
+    if a.add_vendor and a.ignore_vendor:
+        print("[중단] --add-vendor 와 --ignore-vendor 는 같이 쓸 수 없습니다.")
+        return 0
+
+    if a.add_vendor:
+        vp = os.path.join(ROOT, "config", "vendors.json")
+        d = json.load(open(vp, encoding="utf-8"))
+        have = {v["biz_no"] for v in d["vendors"]}
+        added = []
+        for raw in a.add_vendor:
+            sid = re.sub(r"\D", "", raw)
+            if len(sid) != 10:
+                print(f"  건너뜀  {raw} — 사업자번호가 10자리가 아닙니다")
+                continue
+            if sid in have:
+                print(f"  건너뜀  {fmt_biz(sid)} — 이미 등록돼 있습니다")
+                continue
+            d["vendors"].append({"biz_no": sid, "name": "",
+                                 "cycle": a.cycle, "note": ""})
+            added.append(sid)
+        if not added:
+            print("[중단] 추가된 거래처가 없습니다.")
+            return 0
+        json.dump(d, open(vp, "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=2)
+        for sid in added:
+            print(f"  추가    {fmt_biz(sid)} · cycle={a.cycle}")
+        print("\n  상호(name)는 비어 있습니다. 리포트를 다시 만들면 자료에서 채워지며,\n"
+              "  고정 표기를 쓰려면 vendors.json 에서 직접 적으세요.")
+        return len(added)
+
+    cp = os.path.join(ROOT, "config", "check-config.json")
+    d = json.load(open(cp, encoding="utf-8"))
+    cur = list(d.get("ignore_suppliers", []))
+    new = []
+    for raw in a.ignore_vendor:
+        sid = re.sub(r"\D", "", raw)
+        if len(sid) != 10:
+            print(f"  건너뜀  {raw} — 사업자번호가 10자리가 아닙니다")
+            continue
+        if sid in cur:
+            print(f"  건너뜀  {fmt_biz(sid)} — 이미 제외 목록에 있습니다")
+            continue
+        cur.append(sid)
+        new.append(sid)
+    if not new:
+        print("[중단] 제외 목록에 추가된 항목이 없습니다.")
+        return 0
+    d["ignore_suppliers"] = cur
+    json.dump(d, open(cp, "w", encoding="utf-8"),
+              ensure_ascii=False, indent=2)
+    for sid in new:
+        print(f"  제외    {fmt_biz(sid)} — '추가 권장' 재권유를 끕니다")
+    return len(new)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("token")
@@ -241,7 +307,24 @@ def main():
     ap.add_argument("--message", default=None, help="커밋 메시지")
     ap.add_argument("--force", action="store_true",
                     help="실행 이력이 뒤로 가도 강행 (이력이 지워짐)")
+    ap.add_argument("--add-vendor", nargs="+", metavar="사업자번호",
+                    help="vendors.json 에 거래처를 추가한 뒤 push. "
+                         "이름·주기는 최신 산출물의 대상외 목록에서 가져온다. "
+                         "--ignore 와 같이 쓸 수 없다.")
+    ap.add_argument("--ignore-vendor", nargs="+", metavar="사업자번호",
+                    help="config 의 ignore_suppliers 에 넣어 '추가 권장' 재권유를 끈다. "
+                         "의도적으로 점검 대상에서 뺀 거래처용.")
+    ap.add_argument("--cycle", default="매월",
+                    help="--add-vendor 로 추가할 때 넣을 cycle 값 (기본 매월)")
     a = ap.parse_args()
+
+    if a.add_vendor or a.ignore_vendor:
+        n = edit_vendor_lists(a)
+        if n == 0:
+            return 1
+        # 목록만 고치고 끝내지 않는다. 고친 파일이 올라가야 다음 회차에 반영된다.
+        if not a.only and not a.code:
+            a.only = "vendors" if a.add_vendor else "code"
 
     if a.only:
         groups = [a.only]
