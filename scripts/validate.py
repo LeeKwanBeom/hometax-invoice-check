@@ -34,6 +34,18 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 _res = []
 
 
+def _is_num(v):
+    """매트릭스 금액 칸으로 더해도 되는 값인가. None 은 공란(0 취급), bool 은 제외."""
+    return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool))
+
+
+# check_sheets 가 False 면 이 이름들이 전부 SKIP 으로 기록된다. main() 의 호출 순서와 같다.
+SHEET_CHECKS = ["매트릭스 월 컬럼", "미수취=공란 검사", "전액취소=0+노랑 검사",
+                "점검 대상 누락 검사", "합계 대사", "월별 합 대사", "원본 행수",
+                "승인번호 중복", "상계 매칭", "대상외공급자 시트", "등급 분류",
+                "실행 이력 비교", "해결 집계", "발급기한 유예"]
+
+
 def rec(level, name, detail=""):
     _res.append((level, name, detail))
 
@@ -168,7 +180,14 @@ def check_totals(wb, cfg, df):
         rec(FAIL, "합계 대사", "'순공급가액' 열을 못 찾음")
         return
     col = m["순공급가액"]
-    total = sum(ws.cell(i, col).value or 0 for i in range(r + 1, ws.max_row + 1))
+    vals = [ws.cell(i, col).value for i in range(r + 1, ws.max_row + 1)]
+    bad = [v for v in vals if not _is_num(v)]
+    if bad:
+        # 숫자가 아닌 칸은 더하지 않는다. 예전에는 ' ' 하나로 TypeError 가 나
+        # 요약이 한 줄도 안 찍혔다(6차 N6).
+        rec(FAIL, "합계 대사", f"'순공급가액' 열에 숫자가 아닌 칸 {len(bad)}개: {bad[:3]!r}")
+        return
+    total = sum(v or 0 for v in vals)
     raw = int(df["공급가액n"].sum())
     if total != raw:
         rec(FAIL, "합계 대사", f"매트릭스 {total:,} vs 원본 {raw:,} · 차 {total-raw:,}")
@@ -250,17 +269,21 @@ def check_monthly_totals(wb, cfg, as_of):
         rec(FAIL, "월별 합 대사", "원본정제데이터에서 작성일자를 하나도 못 읽음")
         return
 
-    diffs, checked = [], 0
+    diffs, checked, nonnum = [], 0, []
     for ym in month_range(as_of):
         label = month_label(ym, as_of)
         if label not in m:
             continue
         checked += 1
-        col = sum(v or 0 for _, v in col_values(mx, r, m[label]))
+        cells = [v for _, v in col_values(mx, r, m[label])]
+        nonnum += [f"{label}: {v!r}" for v in cells if not _is_num(v)]
+        col = sum(v or 0 for v in cells if _is_num(v))
         if col != raw_sum.get(ym, 0):
             diffs.append(f"{label}: 매트릭스 {col:,} vs 원본 {raw_sum.get(ym, 0):,}")
     if checked == 0:
         rec(FAIL, "월별 합 대사", "대사할 월 컬럼을 하나도 못 찾음")
+    elif nonnum:
+        rec(FAIL, "월별 합 대사", f"월 칸에 숫자가 아닌 값 {len(nonnum)}개: " + " · ".join(nonnum[:3]))
     elif diffs:
         rec(FAIL, f"월별 합 대사 불일치 {len(diffs)}개월", "\n".join(diffs))
     else:
@@ -532,13 +555,25 @@ def check_grace(wb, cfg, as_of):
                 if str(f).upper()[-6:] == grace_hex:
                     grace_cells += 1
 
-    if expect and n == 0 and grace_cells == 0:
+    # 신호를 월에 따라 하나만 쓴다(and 로 묶으면 전 월이 완화된다 — 6차 후속 실수).
+    #  - 1월(직전 달이 전년 12월): '기한 전' 0건이 정상 구조라 미수취목록은 증거가 못 된다.
+    #    매트릭스의 유예 색 칸을 본다.
+    #  - 그 밖의 달: 미수취목록의 '기한 전' 건수를 본다. 0건이면 등급열이 훼손됐거나
+    #    유예 로직이 안 돈 것이다. 색 칸은 여기서 면죄부가 되지 않는다.
+    # (or 로 두는 방향은 1월에 늘 FAIL 이 나 쓸 수 없었다.)
+    january = py != as_of.year
+    if expect and january and not grace_hex:
+        rec(SKIP, "발급기한 유예", "colors.grade_grace 가 비어 있어 1월 매트릭스 교차확인 불가")
+    elif expect and january and grace_cells == 0:
         rec(FAIL, "발급기한 유예",
             f"{label}분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 "
-            f"'기한 전' 판정 0건이고 매트릭스 유예 색 칸도 0칸이다. "
+            f"매트릭스 {month_label((py, pm), as_of)} 열에 유예 색 칸이 0칸이다. "
             "유예 로직이 안 걸렸을 수 있다.")
-    elif expect and not grace_hex:
-        rec(SKIP, "발급기한 유예", "colors.grade_grace 가 비어 있어 매트릭스로 교차확인 불가")
+    elif expect and not january and n == 0:
+        rec(FAIL, "발급기한 유예",
+            f"{label}분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 "
+            f"'기한 전' 판정이 0건이다(매트릭스 유예 색 {grace_cells}칸). "
+            "유예 로직이 안 걸렸거나 등급 열이 훼손됐다.")
     else:
         rec(PASS, "발급기한 유예",
             f"'기한 전' {n}건 · 매트릭스 유예 색 {grace_cells}칸 "
@@ -750,7 +785,10 @@ def main():
         check_resolved(wb, cfg)
         check_grace(wb, cfg, as_of)
     else:
-        rec(SKIP, "시트 의존 검사 12건", "시트 구성 FAIL 로 건너뜀")
+        # 건너뛴 검사도 하나씩 SKIP 으로 남긴다. 합쳐서 한 줄로 적으면 요약의
+        # 검사 개수가 평소(18)와 달라져 "검사가 사라졌다" 와 구분이 안 된다.
+        for name in SHEET_CHECKS:
+            rec(SKIP, name, "시트 구성 FAIL 로 건너뜀")
 
     print(f"\n산출물 검증 · {os.path.basename(a.xlsx)} · 기준일 {as_of}\n" + "=" * 68)
     for lv, n, d in _res:
