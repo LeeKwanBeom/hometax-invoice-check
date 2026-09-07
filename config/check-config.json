@@ -1,13 +1,15 @@
 {
   "_comment": "이 파일이 모든 임계값·색상의 단일 출처(single source of truth)다. 스크립트나 SKILL.md에 같은 값을 다시 적지 말 것.",
-
   "my_biz": {
     "_comment": "사업자번호는 하이픈 없는 숫자 10자리로 저장한다. 표시용 하이픈은 코드가 붙인다.",
     "biz_no": "2398603249",
     "name": "주식회사 강한컴퍼니",
-    "_brands": ["김치찜의 정석", "참제육", "퍽퍽살이 싫어 내가 만든 곱도리탕"]
+    "_brands": [
+      "김치찜의 정석",
+      "참제육",
+      "퍽퍽살이 싫어 내가 만든 곱도리탕"
+    ]
   },
-
   "thresholds": {
     "_comment": "판정 기준. 여기만 고치면 전체에 반영된다. unlisted_recommend_* 는 대상외공급자 시트에서 vendors.json 추가를 권할 기준(수취 월수 또는 순공급가액).",
     "stale_days": 30,
@@ -16,38 +18,64 @@
     "unlisted_recommend_months": 3,
     "unlisted_recommend_amount": 3000000
   },
-
   "grace": {
     "_comment": "발급기한 판정 유예. 작성월 다음 달 deadline_day 까지는 미수취로 확정하지 않는다. mode=auto 권장, strict 는 유예 없이 전부 미수취(부가세 신고 직전 최종 점검용).",
     "mode": "auto",
     "deadline_day": 10
   },
-
   "vat_period": {
     "_comment": "부가세 신고기. 매트릭스에 1기/2기 구분을 표시하는 데 쓴다.",
     "enabled": true,
     "periods": [
-      {"name": "1기", "months": [1, 2, 3, 4, 5, 6]},
-      {"name": "2기", "months": [7, 8, 9, 10, 11, 12]}
+      {
+        "name": "1기",
+        "months": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      {
+        "name": "2기",
+        "months": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ]
+      }
     ]
   },
-
   "offset_matching": {
     "_comment": "마이너스 건의 상계 매칭 조건. 금액만 같으면 붙이지 않고 품목명까지 본다(매월 동일 금액 거래처 오매칭 방지).",
     "require_same_item_name": true,
-    "priority": ["same_date_same_item", "same_month_same_item", "same_date", "same_month", "any_earlier"]
+    "priority": [
+      "same_date_same_item",
+      "same_month_same_item",
+      "same_date",
+      "same_month",
+      "any_earlier"
+    ]
   },
-
   "input": {
     "_comment": "홈택스 다운로드 파일 읽기 규칙. 파일명이 아니라 컬럼 구성으로 세금계산서/계산서를 판정한다.",
     "header_row": 5,
     "tax_marker_column": "세액",
     "required_columns": [
-      "작성일자", "승인번호", "공급자사업자등록번호", "상호",
-      "공급받는자사업자등록번호", "합계금액", "공급가액"
+      "작성일자",
+      "승인번호",
+      "공급자사업자등록번호",
+      "상호",
+      "공급받는자사업자등록번호",
+      "합계금액",
+      "공급가액"
     ]
   },
-
   "colors": {
     "_comment": "산출물 서식 색상. references/excel-format.md 는 이 값을 참조만 하고 따로 적지 않는다.",
     "header_bg": "305496",
@@ -59,14 +87,12 @@
     "grade_sporadic": null,
     "border": "BFBFBF"
   },
-
   "format": {
     "_comment": "틀고정(freeze)은 여기에 두지 않는다. 제목 줄·신고기 밴드 때문에 헤더 행 번호가 시트마다 다르고 실행 시점에 따라 달라져서, 값으로 적어두면 반드시 어긋난다(실제로 matrix가 C5로 적혀 있었으나 코드는 D6을 썼다). 코드가 헤더 행 바로 아래로 계산해서 적용한다.",
     "font": "Arial",
     "money": "#,##0",
     "date": "yyyy-mm-dd"
   },
-
   "sheets": {
     "_comment": "시트 이름. validate.py 가 이 이름으로 검증한다.",
     "matrix": "매트릭스",
@@ -74,15 +100,15 @@
     "unlisted": "대상외공급자",
     "raw": "원본정제데이터"
   },
-
   "state": {
     "_comment": "직전 실행 결과 비교용. enabled=false 로 두면 상태 열이 빠진다.",
     "enabled": true,
     "path": "state/last-run.json",
     "resolved_shown_once": true
   },
-
   "output": {
     "filename_template": "매입_전자세금계산서_수취점검_{year}_{asof}.xlsx"
-  }
+  },
+  "ignore_suppliers": [],
+  "_comment_ignore_suppliers": "vendors.json 에서 의도적으로 뺀 공급자번호. 대상외공급자 시트의 '추가 권장' 과 콘솔 재권유에서 제외한다. 제거 != 해결 이므로 여기에 넣어야 매 회차 다시 묻지 않는다."
 }

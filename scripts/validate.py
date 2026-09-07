@@ -25,6 +25,7 @@ from datetime import date
 import pandas as pd
 from openpyxl import load_workbook
 
+from build_report import GRADE_ORDER
 from common import (SKILL_DIR, load_config, load_vendors, load_uploads,
                     match_offsets, drop_split_offsets, norm_biz, month_range,
                     month_label, clip_period, is_in_grace, is_resolved)
@@ -58,13 +59,21 @@ def col_values(ws, r, col):
 # ---------------------------------------------------------------- 검사
 
 def check_sheets(wb, cfg):
+    """시트가 다 있는지. 하나라도 없으면 False 를 돌려 뒤 검사를 건너뛴다.
+
+    예전에는 FAIL 만 기록하고 그대로 진행해, 바로 다음 검사가
+    KeyError: 'Worksheet ... does not exist.' 로 죽었다. 그러면 요약이 한 줄도
+    안 찍혀 무엇이 잘못됐는지 화면에 남지 않는다.
+    """
     # config 의 _comment 키는 설정값이 아니다.
     want = [v for k, v in cfg["sheets"].items() if not k.startswith("_")]
     missing = [s for s in want if s not in wb.sheetnames]
     if missing:
-        rec(FAIL, "시트 구성", f"없는 시트: {missing} / 실제: {wb.sheetnames}")
-    else:
-        rec(PASS, "시트 구성", " · ".join(wb.sheetnames))
+        rec(FAIL, "시트 구성", f"없는 시트: {missing} / 실제: {wb.sheetnames}\n"
+                             "시트를 못 찾아 이후 시트 의존 검사는 건너뛴다.")
+        return False
+    rec(PASS, "시트 구성", " · ".join(wb.sheetnames))
+    return True
 
 
 def check_matrix_months(wb, cfg, as_of):
@@ -346,8 +355,7 @@ def check_grades(wb, cfg, vendors):
     if not r:
         rec(FAIL, "등급 분류", "미수취목록 헤더를 못 찾음")
         return
-    order = {"확인 필요": 0, "기한 전": 1, "단발·비정기": 2, "정상": 3,
-             "거래 종료": 4, "해결": 5}
+    order = GRADE_ORDER
     listed = {norm_biz(v["biz_no"]) for v in vendors}
     mr, mm = find_header_row(mx, ["공급자번호", "상호"])
     mrow = {norm_biz(mx.cell(i, mm["공급자번호"]).value): i
@@ -367,7 +375,9 @@ def check_grades(wb, cfg, vendors):
             bad.append(f"{i}행: 등급 정렬이 뒤집힘 ('{g}' 가 뒤에)")
         prev = max(prev, order[g])
         sid = norm_biz(ws.cell(i, m["공급자번호"]).value)
-        if sid not in listed:
+        if sid not in listed and g != "해결":
+            # '해결' 등급은 직전 실행에만 있던 거래처라 현재 vendors.json 에
+            # 없을 수 있다. 그 경우까지 FAIL 로 잡으면 정상 산출물이 막힌다.
             bad.append(f"{i}행: vendors.json 에 없는 공급자 {sid}")
         if g == "확인 필요" and mrow.get(sid):
             for label in str(ws.cell(i, m["누락된 월"]).value or "").split(", "):
@@ -497,14 +507,45 @@ def check_grace(wb, cfg, as_of):
     col = m["등급"]
     n = sum(1 for i in range(r + 1, ws.max_row + 1)
             if str(ws.cell(i, col).value) == "기한 전")
-    prev = as_of.month - 1
-    expect = prev >= 1 and is_in_grace(as_of.year, prev, as_of, cfg)
-    if expect and n == 0:
+    # 1월 실행이면 as_of.month - 1 == 0 이 되어 expect 가 늘 False 였다.
+    # 그 결과 1월 산출물은 무엇을 깨뜨려도 PASS 였다. 점검 기간의 마지막 직전
+    # 달을 쓰면 1월에는 전년 12월이 잡힌다(month_range 가 붙여준다).
+    # 1월 실행이면 as_of.month - 1 == 0 이 되어 expect 가 늘 False 였다.
+    # 그 결과 1월 산출물은 무엇을 깨뜨려도 PASS 였다. 점검 기간의 직전 달을
+    # 쓰면 1월에는 전년 12월이 잡힌다(month_range 가 붙여준다).
+    ms = month_range(as_of)
+    py, pm = ms[-2] if len(ms) >= 2 else ms[-1]
+    expect = is_in_grace(py, pm, as_of, cfg)
+    label = f"{py}-{pm:02d}"
+
+    # '기한 전' 등급 건수만 보면 1월에는 늘 0 이라 오탐이 난다.
+    # 1월 초에는 대상 달이 전부 유예라 결번이 없고, 결번이 없으면 A·C 어느 경로도
+    # 타지 않아 미수취목록에 행 자체가 안 생긴다. 그게 정상이다.
+    # 그래서 유예 로직이 돌았다는 증거를 매트릭스의 유예 색 칸에서 찾는다.
+    mx = wb[cfg["sheets"]["matrix"]]
+    mr, mm = find_header_row(mx, ["공급자번호", "상호"])
+    grace_hex = (cfg["colors"].get("grade_grace") or "").upper()[-6:]
+    grace_cells = 0
+    if mr and mm:
+        ci = mm.get(month_label((py, pm), as_of))
+        if ci:
+            for i in range(mr + 1, mx.max_row + 1):
+                c = mx.cell(i, ci)
+                f = (c.fill.fgColor.rgb or "") if c.fill and c.fill.fill_type else ""
+                if str(f).upper()[-6:] == grace_hex:
+                    grace_cells += 1
+
+    if expect and n == 0 and grace_cells == 0:
         rec(FAIL, "발급기한 유예",
-            f"{prev}월분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 '기한 전' 판정이 0건. "
+            f"{label}분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 "
+            f"'기한 전' 판정 0건이고 매트릭스 유예 색 칸도 0칸이다. "
             "유예 로직이 안 걸렸을 수 있다.")
+    elif expect and not grace_hex:
+        rec(SKIP, "발급기한 유예", "colors.grade_grace 가 비어 있어 매트릭스로 교차확인 불가")
     else:
-        rec(PASS, "발급기한 유예", f"'기한 전' {n}건 (전월 유예 구간: {expect})")
+        rec(PASS, "발급기한 유예",
+            f"'기한 전' {n}건 · 매트릭스 유예 색 {grace_cells}칸 "
+            f"(직전 달 {label} 유예 구간: {expect})")
 
 
 def check_paths(cfg):
@@ -518,7 +559,12 @@ def check_paths(cfg):
             "references/excel-format.md", "scripts/common.py",
             "scripts/check_input.py", "scripts/build_report.py",
             "scripts/validate.py", "scripts/push.py",
-            "tests/test_edge_cases.py"]
+            "tests/test_edge_cases.py",
+            # 점검 절차의 정본. 둘 중 하나가 없으면 다음 정기점검이
+            # 기준선 없이 돌거나 절차를 절반만 수행한다.
+            "audit/last-audit.md", "audit/checklist.md",
+            # 부트스트랩 원본. 설치본은 세션마다 다시 풀리므로 여기가 정본이다.
+            "install/SKILL.md"]
     miss = [p for p in want if not os.path.exists(os.path.join(SKILL_DIR, p))]
     if miss:
         rec(FAIL, "경로 존재 확인",
@@ -616,6 +662,42 @@ def check_config_single_source(cfg):
             if re.search(rf"(?<![0-9]){val}\s*일", src):
                 bad.append(f"{name}: '{val}일' — {key} 를 문서에 다시 적음")
 
+    # (b-5) 시트 이름 리터럴.
+    # 코드에서는 **시트를 찾는 자리**만 본다. rec() 의 검사 이름처럼 화면에 찍는
+    # 문자열까지 잡으면 오탐이 10건 넘게 나서 검사가 시끄러워진다.
+    # 문서에서는 표·목록에 그대로 적힌 경우를 잡는다(excel-format.md 시트 표).
+    for key, val in cfg["sheets"].items():
+        if key.startswith("_") or not val:
+            continue
+        v = re.escape(val)
+        for name, src in py.items():
+            if re.search(rf'\[\s*["\']{v}["\']\s*\]', src) or \
+               re.search(rf'create_sheet\(\s*["\']{v}["\']', src):
+                bad.append(f"{name}: 시트명 '{val}' 로 시트 조회 — sheets.{key} 하드코딩")
+        for name, src in docs.items():
+            if re.search(rf'\|\s*{v}\s*\|', src) or re.search(rf'`{v}`', src):
+                bad.append(f"{name}: 시트명 '{val}' 리터럴 — sheets.{key} 하드코딩")
+
+    # (b-6) thresholds 숫자 리터럴이 코드에. 문서는 (b-4) 가 이미 본다.
+    # 흔한 작은 수(0,1,2)는 오탐이 압도적이라 3 이상만 본다.
+    for key, val in cfg["thresholds"].items():
+        if key.startswith("_") or not isinstance(val, int) or val < 3:
+            continue
+        for name, src in py.items():
+            # cfg/th 로 읽는 줄은 정상이므로 그 줄은 뺀다.
+            for ln in src.split("\n"):
+                if f'"{key}"' in ln:
+                    continue
+                if re.search(rf"(?<![\w.]){val}(?![\w.])", ln) and re.search(
+                        r"(months_got|elapsed|stale|monthly|sporadic|recommend)", ln):
+                    bad.append(f"{name}: 숫자 {val} 리터럴 — thresholds.{key} 하드코딩 의심")
+
+    # (b-7) deadline_day 의 'N/DD' 날짜 표기. '10일' 형태를 피해가는 사본.
+    dd = cfg["grace"]["deadline_day"]
+    for name, src in docs.items():
+        if re.search(rf"(?<![0-9])\d{{1,2}}/{dd}(?![0-9])", src):
+            bad.append(f"{name}: 'N/{dd}' 날짜 표기 — grace.deadline_day 를 문서에 다시 적음")
+
     if dead:
         rec(FAIL, f"config 죽은 키 {len(dead)}개",
             "코드가 한 번도 읽지 않는 설정이다. 바꿔도 아무 일이 안 일어난다.\n" +
@@ -656,20 +738,22 @@ def main():
 
     check_paths(cfg)
     check_config_single_source(cfg)
-    check_sheets(wb, cfg)
-    check_matrix_months(wb, cfg, as_of)
-    check_matrix_blank_and_fill(wb, cfg, as_of)
-    check_vendor_coverage(wb, cfg, vendors)
-    check_totals(wb, cfg, df)
-    check_monthly_totals(wb, cfg, as_of)
-    check_raw_rows(wb, cfg, df)
-    check_no_duplicates(wb, cfg)
-    check_offsets(wb, cfg)
-    check_unlisted(wb, cfg, vendors)
-    check_grades(wb, cfg, vendors)
-    check_state(wb, cfg)
-    check_resolved(wb, cfg)
-    check_grace(wb, cfg, as_of)
+    if check_sheets(wb, cfg):
+        check_matrix_months(wb, cfg, as_of)
+        check_matrix_blank_and_fill(wb, cfg, as_of)
+        check_vendor_coverage(wb, cfg, vendors)
+        check_totals(wb, cfg, df)
+        check_monthly_totals(wb, cfg, as_of)
+        check_raw_rows(wb, cfg, df)
+        check_no_duplicates(wb, cfg)
+        check_offsets(wb, cfg)
+        check_unlisted(wb, cfg, vendors)
+        check_grades(wb, cfg, vendors)
+        check_state(wb, cfg)
+        check_resolved(wb, cfg)
+        check_grace(wb, cfg, as_of)
+    else:
+        rec(SKIP, "시트 의존 검사 12건", "시트 구성 FAIL 로 건너뜀")
 
     print(f"\n산출물 검증 · {os.path.basename(a.xlsx)} · 기준일 {as_of}\n" + "=" * 68)
     for lv, n, d in _res:

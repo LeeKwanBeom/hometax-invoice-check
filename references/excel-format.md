@@ -10,12 +10,15 @@
 
 시트 이름도 config(`sheets`)에서 읽는다. `validate.py` 가 같은 값으로 검증한다.
 
-| 순서 | 시트 | 내용 |
+| 순서 | config 키 | 내용 |
 |---|---|---|
-| 1 | 매트릭스 | 공급자 × 월. 점검대상 먼저, 대상외 나중 |
-| 2 | 미수취목록 | 등급순 조치 목록 |
-| 3 | 대상외공급자 | vendors.json 에 없는데 등장한 곳 |
-| 4 | 원본정제데이터 | 전 건 (상계 표시 포함) |
+| 1 | `sheets.matrix` | 공급자 × 월. 점검대상 먼저, 대상외 나중 |
+| 2 | `sheets.missing` | 등급순 조치 목록 |
+| 3 | `sheets.unlisted` | vendors.json 에 없는데 등장한 곳 |
+| 4 | `sheets.raw` | 전 건 (상계 표시 포함) |
+
+실제 시트 이름은 `config/check-config.json` 의 `sheets` 를 볼 것.
+여기에 이름을 다시 적지 않는다 — `validate.py` 단일 출처 검사가 잡는다.
 
 ## 매트릭스 셀 규칙
 

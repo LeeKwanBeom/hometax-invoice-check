@@ -242,11 +242,27 @@ def check_vendors(vendors, df):
         nm = str(g["상호"].iloc[-1]).replace(" ", "").replace("주식회사", "").replace("(주)", "")
         alias.setdefault(nm, set()).add(sid)
     changed = {k: v for k, v in alias.items() if len(v) > 1}
+
+    # 이미 until/since 로 짝지어 처리한 쌍은 다시 경고하지 않는다.
+    # 처리를 끝낸 건이 매 회차 올라오면 사용자가 WARN 자체를 안 보게 된다.
+    vmap = {v["biz_no"]: v for v in vendors}
+    def _paired(ids):
+        got_until = any(vmap.get(i, {}).get("until") for i in ids)
+        got_since = any(vmap.get(i, {}).get("since") for i in ids)
+        return got_until and got_since and all(i in vmap for i in ids)
+    resolved = {k: v for k, v in changed.items() if _paired(v)}
+    changed = {k: v for k, v in changed.items() if not _paired(v)}
+    if resolved:
+        rec(OK, f"사업자번호 변경 처리 완료 {len(resolved)}건",
+            "\n".join(f"{k} · {' / '.join(fmt_biz(x) for x in sorted(v))} — until/since 로 짝지어짐"
+                      for k, v in resolved.items()))
+
     if changed:
         rec(WARN, "같은 상호인데 사업자번호가 다름 — 사업자 변경 가능성",
             "\n".join(f"{k} · {' / '.join(fmt_biz(x) for x in sorted(v))}"
                       for k, v in changed.items()) +
-            "\n변경이라면 vendors.json 에서 구 번호를 지우고 신 번호로 교체할 것.")
+            "\n변경이라면 구 번호에 until, 신 번호에 since 를 넣어 둘 다 남긴다. "
+            "구 번호를 지우면 그 기간의 수취 이력이 매트릭스에서 사라진다.")
 
 
 if __name__ == "__main__":

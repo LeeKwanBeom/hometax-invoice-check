@@ -272,7 +272,10 @@ def main():
                         f"[중단] 실행 이력이 뒤로 갑니다: {back}\n"
                         f"       sync 하지 않은 폴더에서 push 하면 원격 이력이 지워집니다.\n"
                         f"       저장소에서 최신본을 받은 폴더에서 다시 실행하세요.\n"
-                        f"       정말 덮어써야 하면 --force 를 붙이세요."
+                        f"       거래처를 의도적으로 뺐다면 줄어든 항목이\n"
+                        f"       그 거래처와 일치하는지 먼저 확인하세요.\n"
+                        f"       전부 설명되면 --force 가 정당합니다"
+                        f" (SKILL.md '가드가 걸렸을 때 밟는 3단계')."
                     )
             changed.append((path, content, sha, "신규" if old is None
                             else diff_lines(old, content, path)))

@@ -12,6 +12,7 @@
                                    [--strict] [--no-state]
 """
 import argparse
+import sys
 import json
 import os
 from datetime import date
@@ -101,6 +102,7 @@ def _one(sid, v, g, months, as_of, cfg, listed):
         "cells": cells, "got": got, "missing": missing,
         "cancelled": cancelled, "grace": grace,
         "months_got": len(got), "rows": len(g), "ended": v.get("until") or "",
+        "ignored": bool(v.get("ignore")),
         "net": int(g["공급가액n"].sum()) if len(g) else 0,
         "last": last, "elapsed": elapsed,
     }
@@ -117,7 +119,12 @@ def grade_all(facts, as_of, cfg):
     rows, a_ids = [], set()
 
     for f in facts:
-        if not f["listed"]:
+        if not f["listed"] or f.get("ignored"):
+            continue
+        # until 로 거래 종료를 등록한 곳은 A 판정 대상이 아니다.
+        # 여기서 안 거르면 '발행 후 전액취소' 로 a_ids 에 들어가, ended 검사가 있는
+        # C 루프에 도달조차 못 한다(전액취소 거래처에 until 이 안 듣던 원인).
+        if f["ended"]:
             continue
         monthly = f["cycle"] == "매월" or f["months_got"] >= th["monthly_min_months"]
 
@@ -142,7 +149,13 @@ def grade_all(facts, as_of, cfg):
             a_ids.add(f["biz_no"])
 
     for f in facts:
-        if not f["listed"] or f["biz_no"] in a_ids:
+        if not f["listed"] or f.get("ignored") or f["biz_no"] in a_ids:
+            continue
+        # ended 는 경과일 가드보다 먼저 본다. 전액취소만 있는 거래처는 유효 건이
+        # 없어 elapsed 가 None 이라, 뒤에 두면 '거래 종료' 로 표시되지 못한다.
+        if f["ended"]:
+            rows.append(_row("C. 거래 종료", "거래 종료", f, [],
+                             f"vendors.json 에 until={f['ended']} 로 등록됨 — 점검 대상 아님"))
             continue
         if f["elapsed"] is None or f["elapsed"] < th["stale_days"]:
             continue
@@ -151,10 +164,7 @@ def grade_all(facts, as_of, cfg):
         # 실제로 기다리는 중인 달은 '지난 달인데 아직 기한이 안 지난' 달뿐이다.
         pending = [ym for ym in f["grace"] if ym != (as_of.year, as_of.month)]
 
-        if f["ended"]:
-            grade, memo, gap = "거래 종료", \
-                f"{_pat(f, as_of)} · vendors.json 에 until={f['ended']} 로 등록됨 — 점검 대상 아님", []
-        elif pending and not f["missing"]:
+        if pending and not f["missing"]:
             grade, memo, gap = "기한 전", \
                 f"{_pat(f, as_of)} · {_grace_note(pending, as_of, cfg)}", []
         elif not f["missing"] and not f["cancelled"]:
@@ -233,7 +243,7 @@ def load_state(cfg):
                       "다만 '신규/계속/해결' 비교는 한 번 끊긴다.")
 
 
-def apply_state(rows, prev, as_of, cfg):
+def apply_state(rows, prev, as_of, cfg, listed_ids=None):
     """
     지난 실행과 비교해 신규 / 계속 / 해결 을 붙인다.
     월 1~2회 주기에서는 '지난달 요청한 게 해결됐나'가 가장 알고 싶은 정보다.
@@ -270,6 +280,11 @@ def apply_state(rows, prev, as_of, cfg):
                 continue
             if bid in by_id:
                 by_id[bid]["status"] = "해결"
+                continue
+            # vendors.json 에서 의도적으로 뺀 거래처는 '해결' 이 아니다.
+            # 제거 != 해결. 새 행을 만들면 validate 의 '미등록 공급자' 검사가
+            # FAIL 을 내고, 사용자에게도 해결된 것처럼 보인다.
+            if listed_ids is not None and bid not in listed_ids:
                 continue
             rows.append({"kind": "해결됨", "grade": "해결", "biz_no": bid,
                          "name": p.get("name", ""), "cycle": "", "gap": [],
@@ -331,10 +346,14 @@ def write_matrix(wb, st, facts, months, as_of, cfg):
     ws.title = cfg["sheets"]["matrix"]
     mb = cfg["my_biz"]
 
-    ws["A1"] = f"공급자 × 월 매입 발급 매트릭스 ({as_of.year}-01-01 ~ {as_of})"
+    # 1월 실행이면 점검 기간이 전년 12월부터 시작한다. as_of.year-01-01 로 적으면
+    # 매트릭스에 있는 전년 12월 열을 제목이 빼먹는다.
+    _y0, _m0 = months[0]
+    ws["A1"] = f"공급자 × 월 매입 발급 매트릭스 ({_y0}-{_m0:02d}-01 ~ {as_of})"
     ws["A1"].font = st.title
     ws["A2"] = (f"공급받는자: {fmt_biz(mb['biz_no'])} {mb['name']} · 값=월별 순공급가액(원) · "
-                f"빈칸=미수취 · 노랑=발행 후 전액취소 · 연파랑=발급기한 전")
+                "빈칸=미수취 · 색칠된 0=발행 후 전액취소 · 옅게 칠한 칸=발급기한 전 "
+                "(색은 config/check-config.json 의 colors)")
     ws["A2"].font = st.sub
 
     head = ["공급자번호", "상호", "주기"] + [month_label(ym, as_of) for ym in months] + \
@@ -464,7 +483,9 @@ def write_unlisted(wb, st, facts, cfg, as_of):
     for f in sorted(un, key=lambda x: (-x["months_got"], -x["net"])):
         ws.append([fmt_biz(f["biz_no"]), f["name"],
                    _labels(f["got"], as_of) if f["got"] else "",
-                   f["rows"], f["net"], f["last"], unlisted_reco(f, cfg)])
+                   f["rows"], f["net"], f["last"],
+                   "" if f["biz_no"] in set(cfg.get("ignore_suppliers", []))
+                   else unlisted_reco(f, cfg)])
     for row in ws.iter_rows(min_row=hdr_row + 1, max_row=ws.max_row, max_col=len(head)):
         for c in row:
             c.font, c.border = st.body, st.border
@@ -541,6 +562,25 @@ def main():
     pairs = int((df["상계"] == "취소분(상계)").sum())
 
     facts, months = build_facts(df, vendors, as_of, cfg)
+
+    # 기간 안 자료가 0건이거나 점검 대상이 0곳이면 리포트를 만들지 않는다.
+    # 만들면 직전 실행에서 '확인 필요' 였던 곳들이 전부 '해결' 로 표기돼
+    # "자료 없음 = 해결" 이 된다. check_input 이 FAIL 을 내는 상황과 같은 조건이다.
+    targets = [f for f in facts if f["listed"] and not f.get("ignored")]
+    if len(df) == 0:
+        sys.exit(
+            f"[중단] 기간 안 자료 0건 — 리포트를 만들지 않았습니다.\n"
+            f"  기준일 {as_of} · 점검 기간 {months[0][0]}-{months[0][1]:02d} ~ "
+            f"{months[-1][0]}-{months[-1][1]:02d}\n"
+            "  홈택스 파일의 기간과 --as-of 값을 확인하세요. "
+            "이 상태로 만들면 직전 '확인 필요' 가 전부 '해결' 로 표기됩니다.")
+    if not targets:
+        # 점검 대상이 0곳이어도 리포트 자체는 뜻이 있다(전원 대상외 목록).
+        # 직전 '확인 필요' 가 '해결' 로 둔갑하는 문제는 apply_state 의
+        # listed_ids 가드가 이미 막으므로 여기서는 경고만 한다.
+        print("[경고] vendors.json 에 점검 대상이 0곳입니다. "
+              "대상외공급자 시트만 의미가 있습니다.")
+
     rows = grade_all(facts, as_of, cfg)
     a_ids = {r["biz_no"] for r in rows if r["kind"].startswith("A")}
     dedup = sum(1 for f in facts
@@ -549,7 +589,8 @@ def main():
                 and f["elapsed"] >= cfg["thresholds"]["stale_days"])
 
     prev = load_state(cfg)
-    rows = apply_state(rows, prev, as_of, cfg)
+    rows = apply_state(rows, prev, as_of, cfg,
+                       listed_ids={f["biz_no"] for f in facts if f["listed"]})
 
     st = Style(cfg)
     wb = Workbook()
@@ -601,7 +642,10 @@ def _print_deadline(facts, as_of, cfg):
 
 def _print_reco(facts, cfg):
     """대상외 중 '추가 권장'. 시트를 안 열면 놓치므로 콘솔에도 띄운다."""
-    un = [f for f in facts if not f["listed"] and unlisted_reco(f, cfg)]
+    skip = set(cfg.get("ignore_suppliers", []))
+    un = [f for f in facts
+          if not f["listed"] and unlisted_reco(f, cfg)
+          and f["biz_no"] not in skip]
     if not un:
         return
     print(f"vendors.json 추가 권장 {len(un)}곳:")

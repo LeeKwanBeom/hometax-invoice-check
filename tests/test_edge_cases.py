@@ -53,7 +53,7 @@ class sandbox:
     def __enter__(self):
         self.dir = tempfile.mkdtemp(prefix="hometax-test-")
         for name in ["config", "references", "scripts", "state", "tests",
-                     "install"]:
+                     "install", "audit"]:
             src = os.path.join(SKILL, name)
             if os.path.isdir(src):
                 shutil.copytree(src, os.path.join(self.dir, name))
@@ -321,7 +321,10 @@ def t_resolved_status():
                  "--uploads", FIX, "--as-of", "2026-01-05"], cwd=sb)
         check("새 행 경로에서 FAIL 없음", v.returncode == 0,
               v.stdout.strip()[-240:])
-        check("등급·상태 동시 표기를 이중계상하지 않음", "상태열만 0" in v.stdout,
+        # 두 경로가 섞여도 합계는 2 여야 한다. until 이 붙은 거래처는
+        # '거래 종료' 행이 먼저 생기므로 새 행이 아니라 상태 열로 표기된다
+        # (#29 수정 이후). 어느 쪽으로 세든 이중계상은 없어야 한다.
+        check("등급·상태 동시 표기를 이중계상하지 않음", "총 2건" in v.stdout,
               v.stdout.strip()[-160:])
 
 
@@ -613,6 +616,35 @@ def t_cycle_warning():
     check("cycle 검사가 결과를 냄", "cycle" in r.stdout, r.stdout.strip()[-160:])
 
 
+def t_no_upload_files():
+    """홈택스 파일이 0개일 때. 리포트를 만들지 않고 멈춰야 한다."""
+    print("\n[홈택스 파일 0개]")
+    with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as out:
+        r = run(["scripts/check_input.py", empty, "--as-of", "2026-09-06"])
+        check("check_input 이 크래시하지 않음", r.returncode in (0, 1),
+              r.stdout.strip()[-160:] + r.stderr.strip()[-160:])
+        r2 = run(["scripts/build_report.py", "--uploads", empty,
+                  "--out", out, "--as-of", "2026-09-06"])
+        made = [f for f in os.listdir(out) if f.endswith(".xlsx")]
+        check("리포트를 만들지 않음", not made, f"생성된 파일 {made}")
+        check("중단 사유를 알림",
+              "중단" in (r2.stdout + r2.stderr) or r2.returncode != 0,
+              (r2.stdout + r2.stderr).strip()[-200:])
+
+
+def t_zero_rows_not_resolved():
+    """기간 안 자료가 0건이면 직전 '확인 필요' 를 '해결' 로 만들지 않는다."""
+    print("\n[자료 0건 = 해결 아님]")
+    with tempfile.TemporaryDirectory() as out:
+        r = run(["scripts/build_report.py", "--uploads", FIX,
+                 "--out", out, "--as-of", "2027-01-05"])
+        made = [f for f in os.listdir(out) if f.endswith(".xlsx")]
+        check("자료 밖 기준일에 리포트를 만들지 않음", not made, f"생성 {made}")
+        check("중단 메시지에 이유가 있음",
+              "자료 0건" in (r.stdout + r.stderr) or "중단" in (r.stdout + r.stderr),
+              (r.stdout + r.stderr).strip()[-200:])
+
+
 def main():
     print("=" * 68)
     print("엣지케이스 테스트")
@@ -624,7 +656,8 @@ def main():
                t_month_boundary, t_strict_current_month, t_until_last_year,
                t_sheet_headers, t_duplicate_uploads, t_validate_strict,
                t_december, t_as_of_clipping, t_validate_catches_regressions,
-               t_config_single_source, t_cycle_warning]:
+               t_config_single_source, t_cycle_warning,
+               t_no_upload_files, t_zero_rows_not_resolved]:
         try:
             fn()
         except Exception as e:
