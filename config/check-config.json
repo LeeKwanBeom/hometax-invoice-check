@@ -109,6 +109,6 @@
   "output": {
     "filename_template": "매입_전자세금계산서_수취점검_{year}_{asof}.xlsx"
   },
-  "ignore_suppliers": [],
+  "ignore_suppliers": ["2120459010"],
   "_comment_ignore_suppliers": "vendors.json 에서 의도적으로 뺀 공급자번호. 대상외공급자 시트의 '추가 권장' 과 콘솔 재권유에서 제외한다. 제거 != 해결 이므로 여기에 넣어야 매 회차 다시 묻지 않는다."
 }
