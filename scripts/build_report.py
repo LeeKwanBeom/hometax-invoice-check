@@ -25,7 +25,7 @@ from openpyxl.utils import get_column_letter
 from common import (SKILL_DIR, _load_json, load_config, load_vendors, load_uploads,
                     match_offsets, drop_split_offsets, live_rows, norm_biz, fmt_biz,
                     month_range, month_label, clip_period,
-                    is_in_grace, is_resolved, deadline_for, vat_period_of)
+                    is_in_grace, is_resolved, deadline_for, vat_period_of, until_passed)
 
 GRADE_ORDER = {"확인 필요": 0, "기한 전": 1, "단발·비정기": 2, "정상": 3,
                "거래 종료": 4, "해결": 5}
@@ -101,8 +101,12 @@ def _one(sid, v, g, months, as_of, cfg, listed):
         "note": v.get("note", ""), "listed": listed,
         "cells": cells, "got": got, "missing": missing,
         "cancelled": cancelled, "grace": grace,
-        "months_got": len(got), "rows": len(g), "ended": v.get("until") or "",
-        "ignored": bool(v.get("ignore")),
+        "months_got": len(got), "rows": len(g),
+        # until: vendors.json 의 raw 문자열(YYYY-MM). 표시용.
+        # ended: 그 until 이 실행일 기준으로 지났는가 — check_input.check_cycle 과
+        #        같은 common.until_passed 를 쓴다. 미래 until 은 아직 거래 중이다.
+        "until": v.get("until") or "",
+        "ended": until_passed(v.get("until"), as_of),
         "net": int(g["공급가액n"].sum()) if len(g) else 0,
         "last": last, "elapsed": elapsed,
     }
@@ -119,11 +123,12 @@ def grade_all(facts, as_of, cfg):
     rows, a_ids = [], set()
 
     for f in facts:
-        if not f["listed"] or f.get("ignored"):
+        if not f["listed"]:
             continue
-        # until 로 거래 종료를 등록한 곳은 A 판정 대상이 아니다.
+        # until 이 **지난** 곳은 A 판정 대상이 아니다(ended = until_passed).
         # 여기서 안 거르면 '발행 후 전액취소' 로 a_ids 에 들어가, ended 검사가 있는
         # C 루프에 도달조차 못 한다(전액취소 거래처에 until 이 안 듣던 원인).
+        # until 이 미래인 곳은 아직 거래 중이라 그대로 결번 판정을 받는다.
         if f["ended"]:
             continue
         monthly = f["cycle"] == "매월" or f["months_got"] >= th["monthly_min_months"]
@@ -149,13 +154,13 @@ def grade_all(facts, as_of, cfg):
             a_ids.add(f["biz_no"])
 
     for f in facts:
-        if not f["listed"] or f.get("ignored") or f["biz_no"] in a_ids:
+        if not f["listed"] or f["biz_no"] in a_ids:
             continue
         # ended 는 경과일 가드보다 먼저 본다. 전액취소만 있는 거래처는 유효 건이
         # 없어 elapsed 가 None 이라, 뒤에 두면 '거래 종료' 로 표시되지 못한다.
         if f["ended"]:
             rows.append(_row("C. 거래 종료", "거래 종료", f, [],
-                             f"vendors.json 에 until={f['ended']} 로 등록됨 — 점검 대상 아님"))
+                             f"vendors.json 에 until={f['until']} 로 등록됨 — 점검 대상 아님"))
             continue
         if f["elapsed"] is None or f["elapsed"] < th["stale_days"]:
             continue
@@ -563,10 +568,13 @@ def main():
 
     facts, months = build_facts(df, vendors, as_of, cfg)
 
-    # 기간 안 자료가 0건이거나 점검 대상이 0곳이면 리포트를 만들지 않는다.
-    # 만들면 직전 실행에서 '확인 필요' 였던 곳들이 전부 '해결' 로 표기돼
-    # "자료 없음 = 해결" 이 된다. check_input 이 FAIL 을 내는 상황과 같은 조건이다.
-    targets = [f for f in facts if f["listed"] and not f.get("ignored")]
+    # 기간 안 자료가 0건이면 리포트를 만들지 않는다. 만들면 직전 실행에서
+    # '확인 필요' 였던 곳들이 전부 '해결' 로 표기돼 "자료 없음 = 해결" 이 된다.
+    # check_input 이 FAIL 을 내는 상황과 같은 조건이다.
+    # 점검 대상이 0곳인 것은 **중단이 아니라 경고**다 — 직전 '확인 필요' 의 '해결'
+    # 둔갑은 apply_state 의 listed_ids 가드가 이미 막고, 빈 vendors.json 으로
+    # 대상외공급자 목록만 보는 사용은 정당하기 때문이다.
+    targets = [f for f in facts if f["listed"]]
     if len(df) == 0:
         sys.exit(
             f"[중단] 기간 안 자료 0건 — 리포트를 만들지 않았습니다.\n"
