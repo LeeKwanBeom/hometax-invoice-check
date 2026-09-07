@@ -508,9 +508,6 @@ def check_grace(wb, cfg, as_of):
     n = sum(1 for i in range(r + 1, ws.max_row + 1)
             if str(ws.cell(i, col).value) == "기한 전")
     # 1월 실행이면 as_of.month - 1 == 0 이 되어 expect 가 늘 False 였다.
-    # 그 결과 1월 산출물은 무엇을 깨뜨려도 PASS 였다. 점검 기간의 마지막 직전
-    # 달을 쓰면 1월에는 전년 12월이 잡힌다(month_range 가 붙여준다).
-    # 1월 실행이면 as_of.month - 1 == 0 이 되어 expect 가 늘 False 였다.
     # 그 결과 1월 산출물은 무엇을 깨뜨려도 PASS 였다. 점검 기간의 직전 달을
     # 쓰면 1월에는 전년 12월이 잡힌다(month_range 가 붙여준다).
     ms = month_range(as_of)
