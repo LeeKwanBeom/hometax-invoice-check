@@ -17,7 +17,7 @@ import pandas as pd
 
 from common import (load_config, load_vendors, load_uploads, norm_biz, fmt_biz,
                     biz_checksum_ok, month_range, month_label, clip_period,
-                    live_rows, match_offsets)
+                    live_rows, match_offsets, until_passed)
 
 OK, WARN, FAIL = "OK  ", "WARN", "FAIL"
 _results = []
@@ -137,17 +137,6 @@ def check_period_start(df, as_of):
         rec(OK, f"{month_label((first_y, first_m), as_of)} {day}일부터 — 시작 구간 정상")
 
 
-def _until_passed(until, as_of):
-    """until(YYYY-MM) 이 실행일 기준으로 이미 지났는가. 없거나 형식이 다르면 False."""
-    if not until:
-        return False
-    try:
-        y, m = (int(x) for x in str(until).split("-")[:2])
-    except (ValueError, TypeError):
-        return False
-    return (y, m) < (as_of.year, as_of.month)
-
-
 def check_cycle(vendors, df, as_of, cfg):
     """
     vendors.json 의 cycle 이 실제 수취 패턴과 어긋나는지 자동으로 본다.
@@ -168,7 +157,7 @@ def check_cycle(vendors, df, as_of, cfg):
         # 단 **until 이 지났을 때만** 건너뛴다. 미래 날짜가 적혀 있으면 아직
         # 거래 중이라 주기가 맞아야 정상이고, until 오입력(연도 오타 등)도
         # 이 검사가 아니면 영영 안 잡힌다.
-        if _until_passed(v.get("until"), as_of):
+        if until_passed(v.get("until"), as_of):   # build_report 와 같은 기준(common)
             continue
         sid = norm_biz(v["biz_no"])
         g = df[df["공급자번호"] == sid]
