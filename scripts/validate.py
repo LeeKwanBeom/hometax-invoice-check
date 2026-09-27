@@ -20,12 +20,13 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import date
 
 import pandas as pd
 from openpyxl import load_workbook
 
-from build_report import GRADE_ORDER
+from build_report import GRADE_ORDER, build_facts, grade_all, _labels
 from common import (SKILL_DIR, load_config, load_vendors, load_uploads,
                     match_offsets, drop_split_offsets, norm_biz, month_range,
                     month_label, clip_period, is_in_grace, is_resolved)
@@ -43,7 +44,7 @@ def _is_num(v):
 SHEET_CHECKS = ["매트릭스 월 컬럼", "미수취=공란 검사", "전액취소=0+노랑 검사",
                 "점검 대상 누락 검사", "합계 대사", "월별 합 대사", "원본 행수",
                 "승인번호 중복", "상계 매칭", "대상외공급자 시트", "등급 분류",
-                "실행 이력 비교", "해결 집계", "발급기한 유예"]
+                "등급 재산출 대조", "실행 이력 비교", "해결 집계", "발급기한 유예"]
 
 
 def rec(level, name, detail=""):
@@ -93,6 +94,7 @@ def check_matrix_months(wb, cfg, as_of):
     want = [month_label(ym, as_of) for ym in month_range(as_of)]
     r, m = find_header_row(ws, ["공급자번호", "상호"])
     if not r:
+        # 이 FAIL 이 '매트릭스 월 컬럼' 자리를 대신한다 — 요약 개수는 정상 실행과 같게 유지(7차 #6).
         rec(FAIL, "매트릭스 헤더", "'공급자번호'/'상호' 헤더 행을 못 찾음")
         return None, None
     found = [k for k in m if k.endswith("월")]
@@ -113,6 +115,9 @@ def check_matrix_blank_and_fill(wb, cfg, as_of):
     ws = wb[cfg["sheets"]["matrix"]]
     r, m = find_header_row(ws, ["공급자번호", "상호"])
     if not r:
+        # 조용히 return 하면 검사 두 개가 요약에서 사라진다(7차 #6). SKIP 으로 남긴다.
+        rec(SKIP, "미수취=공란 검사", "매트릭스 헤더 미검출")
+        rec(SKIP, "전액취소=0+노랑 검사", "매트릭스 헤더 미검출")
         return
     mcols = [m[month_label(ym, as_of)] for ym in month_range(as_of)
              if month_label(ym, as_of) in m]
@@ -156,6 +161,7 @@ def check_vendor_coverage(wb, cfg, vendors):
     ws = wb[cfg["sheets"]["matrix"]]
     r, m = find_header_row(ws, ["공급자번호", "상호"])
     if not r:
+        rec(SKIP, "점검 대상 누락 검사", "매트릭스 헤더 미검출")
         return
     col = m["공급자번호"]
     seen = {norm_biz(ws.cell(i, col).value)
@@ -420,8 +426,59 @@ def check_grades(wb, cfg, vendors):
             "미수취목록도 매트릭스도 비어 있음 — 검사 대상을 못 찾았다")
     elif bad:
         rec(FAIL, f"등급 분류 이상 {len(bad)}건", "\n".join(bad[:10]))
-    else:
+    elif mrow:
         rec(PASS, "등급 분류", f"{n}행 · 등급값·정렬·결번 표기 정상")
+    else:
+        # 매트릭스 헤더를 못 찾으면 결번 대조는 한 건도 못 한 것이다. "정상" 이라고 쓰지 않는다(7차 #6).
+        rec(PASS, "등급 분류", f"{n}행 · 등급값·정렬 정상 · 결번 표기 미확인(매트릭스 헤더 미검출)")
+
+
+def check_grade_recompute(wb, cfg, rows, as_of):
+    """
+    미수취목록의 등급을 **다시 계산해** 대조한다 (7차 신설 — 결함 #1 · 개선안 1).
+
+    check_grades 는 형태(값·정렬·결번 공란)만 본다. 여기서는 validate 가 이미 가진
+    df·vendors·cfg·as_of 로 build_report.build_facts + grade_all 을 **같은 인자**(--strict 포함)로
+    돌려 기대 (공급자번호, 등급, 결번월 표기) 다중집합을 만들고, 시트에서 '해결' 등급 행을 뺀
+    다중집합과 정확 일치를 본다.
+      - 기대에 있는데 시트에 없음      → FAIL (누락 목록)
+      - 시트에 있는데 기대에 없음      → FAIL (초과·불일치 목록. 행 복제도 여기 잡힌다)
+      - 둘 다 0 이어도 PASS 로 두되 "기대 0 · 시트 0" 을 명시한다(1월 초·2월 초가 그렇다)
+    다중집합(Counter)인 이유: 집합으로 비교하면 같은 행을 두 번 넣어도 통과한다.
+
+    한계: build_report 와 같은 함수를 쓰므로 **판정 논리 자체의 오류는 여기서 못 잡는다** —
+    그건 tests/test_edge_cases.py 의 몫이다. 이 검사가 잡는 것은 시트가 판정과 다르게
+    쓰였거나 나중에 훼손된 경우다.
+    """
+    ws = wb[cfg["sheets"]["missing"]]
+    r, m = find_header_row(ws, ["등급", "공급자번호", "누락된 월"])
+    if not r:
+        rec(FAIL, "등급 재산출 대조", "미수취목록 헤더를 못 찾음")
+        return
+    expect = Counter((x["biz_no"], x["grade"], _labels(x["gap"], as_of)) for x in rows)
+    sheet = Counter()
+    for i in range(r + 1, ws.max_row + 1):
+        g = ws.cell(i, m["등급"]).value
+        if g is None or str(g).strip() == "":
+            continue
+        g = str(g).strip()
+        if g == "해결":
+            continue        # apply_state 가 만든 새 행. 판정 결과가 아니다.
+        sheet[(norm_biz(ws.cell(i, m["공급자번호"]).value), g,
+               str(ws.cell(i, m["누락된 월"]).value or "").strip())] += 1
+    missing, extra = expect - sheet, sheet - expect
+
+    def fmt(c):
+        return ", ".join(f"{b} {g} [{gap or '-'}]" + (f"×{k}" if k > 1 else "")
+                         for (b, g, gap), k in sorted(c.items()))
+    if missing or extra:
+        rec(FAIL, "등급 재산출 대조",
+            (f"기대에 있는데 시트에 없음 {sum(missing.values())}건: {fmt(missing)}\n" if missing else "")
+            + (f"시트에 있는데 기대에 없음(초과·불일치) {sum(extra.values())}건: {fmt(extra)}" if extra else ""))
+    else:
+        rec(PASS, "등급 재산출 대조",
+            f"기대 {sum(expect.values())} · 시트 {sum(sheet.values())} 행 정확 일치"
+            + (" (기대 0 · 시트 0)" if not expect else ""))
 
 
 def check_state(wb, cfg):
@@ -517,8 +574,17 @@ def check_resolved(wb, cfg):
             f"콘솔의 '해결' 숫자와 같아야 한다")
 
 
-def check_grace(wb, cfg, as_of):
-    """유예 판정이 실제로 작동했는지. auto 모드인데 유예 칸이 0이면 의심."""
+def check_grace(wb, cfg, as_of, facts, rows):
+    """
+    유예 판정이 실제로 작동했는지 — **기대값과 정확 일치**로 본다 (7차 개정).
+
+    6차까지는 "'기한 전' 건수가 0 이면 FAIL" 이었고 1월만 매트릭스 색 칸으로 대신 봤다.
+    그런데 2월(창이 1~2월뿐)처럼 '기한 전' 이 구조적으로 0 인 달이 더 있어 정상 산출물에
+    FAIL 이 났다(7차 결함 #1). 이제는 grade_all 이 낸 '기한 전' 기대 건수와 시트 건수를,
+    그리고 직전 달 열의 유예 색 칸 수와 facts 의 grace 칸 수를 각각 **정확히** 비교한다.
+    0=0 이면 PASS 다. 월별 분기(1월 특례)는 없앴다.
+    한계는 check_grade_recompute 와 같다 — 같은 함수를 쓰므로 판정 논리 오류는 tests 몫.
+    """
     if cfg["grace"]["mode"] != "auto":
         rec(SKIP, "발급기한 유예", "strict 모드")
         return
@@ -530,53 +596,44 @@ def check_grace(wb, cfg, as_of):
     col = m["등급"]
     n = sum(1 for i in range(r + 1, ws.max_row + 1)
             if str(ws.cell(i, col).value) == "기한 전")
-    # 1월 실행이면 as_of.month - 1 == 0 이 되어 expect 가 늘 False 였다.
-    # 그 결과 1월 산출물은 무엇을 깨뜨려도 PASS 였다. 점검 기간의 직전 달을
-    # 쓰면 1월에는 전년 12월이 잡힌다(month_range 가 붙여준다).
+    exp_n = sum(1 for x in rows if x["grade"] == "기한 전")
     ms = month_range(as_of)
     py, pm = ms[-2] if len(ms) >= 2 else ms[-1]
     expect = is_in_grace(py, pm, as_of, cfg)
     label = f"{py}-{pm:02d}"
+    if n != exp_n:
+        rec(FAIL, "발급기한 유예",
+            f"'기한 전' 시트 {n}건 vs 기대 {exp_n}건 (직전 달 {label} 유예 구간: {expect}). "
+            "등급 열이 훼손됐거나 유예 로직이 안 돌았다.")
+        return
 
-    # '기한 전' 등급 건수만 보면 1월에는 늘 0 이라 오탐이 난다.
-    # 1월 초에는 대상 달이 전부 유예라 결번이 없고, 결번이 없으면 A·C 어느 경로도
-    # 타지 않아 미수취목록에 행 자체가 안 생긴다. 그게 정상이다.
-    # 그래서 유예 로직이 돌았다는 증거를 매트릭스의 유예 색 칸에서 찾는다.
+    # 보조 신호: 매트릭스 직전 달 열의 유예 색 칸 == facts 에서 그 달이 grace 인 행.
+    grace_hex = (cfg["colors"].get("grade_grace") or "").upper()[-6:]
+    if not grace_hex:
+        rec(PASS, "발급기한 유예",
+            f"'기한 전' {n}건 = 기대 · 색 교차확인 생략(colors.grade_grace 비어 있음) "
+            f"(직전 달 {label} 유예 구간: {expect})")
+        return
+    exp_cells = sum(1 for f in facts if f["cells"].get((py, pm), {}).get("state") == "grace")
     mx = wb[cfg["sheets"]["matrix"]]
     mr, mm = find_header_row(mx, ["공급자번호", "상호"])
-    grace_hex = (cfg["colors"].get("grade_grace") or "").upper()[-6:]
-    grace_cells = 0
-    if mr and mm:
-        ci = mm.get(month_label((py, pm), as_of))
-        if ci:
-            for i in range(mr + 1, mx.max_row + 1):
-                c = mx.cell(i, ci)
-                f = (c.fill.fgColor.rgb or "") if c.fill and c.fill.fill_type else ""
-                if str(f).upper()[-6:] == grace_hex:
-                    grace_cells += 1
-
-    # 신호를 월에 따라 하나만 쓴다(and 로 묶으면 전 월이 완화된다 — 6차 후속 실수).
-    #  - 1월(직전 달이 전년 12월): '기한 전' 0건이 정상 구조라 미수취목록은 증거가 못 된다.
-    #    매트릭스의 유예 색 칸을 본다.
-    #  - 그 밖의 달: 미수취목록의 '기한 전' 건수를 본다. 0건이면 등급열이 훼손됐거나
-    #    유예 로직이 안 돈 것이다. 색 칸은 여기서 면죄부가 되지 않는다.
-    # (or 로 두는 방향은 1월에 늘 FAIL 이 나 쓸 수 없었다.)
-    january = py != as_of.year
-    if expect and january and not grace_hex:
-        rec(SKIP, "발급기한 유예", "colors.grade_grace 가 비어 있어 1월 매트릭스 교차확인 불가")
-    elif expect and january and grace_cells == 0:
+    ci = mm.get(month_label((py, pm), as_of)) if mr else None
+    if not ci:
+        rec(FAIL, "발급기한 유예", f"매트릭스에서 직전 달 {label} 열을 못 찾음(헤더 미검출)")
+        return
+    got_cells = 0
+    for i in range(mr + 1, mx.max_row + 1):
+        c = mx.cell(i, ci)
+        f = (c.fill.fgColor.rgb or "") if c.fill and c.fill.fill_type else ""
+        if str(f).upper()[-6:] == grace_hex:
+            got_cells += 1
+    if got_cells != exp_cells:
         rec(FAIL, "발급기한 유예",
-            f"{label}분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 "
-            f"매트릭스 {month_label((py, pm), as_of)} 열에 유예 색 칸이 0칸이다. "
-            "유예 로직이 안 걸렸을 수 있다.")
-    elif expect and not january and n == 0:
-        rec(FAIL, "발급기한 유예",
-            f"{label}분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 "
-            f"'기한 전' 판정이 0건이다(매트릭스 유예 색 {grace_cells}칸). "
-            "유예 로직이 안 걸렸거나 등급 열이 훼손됐다.")
+            f"매트릭스 {month_label((py, pm), as_of)} 열 유예 색 {got_cells}칸 vs 기대 {exp_cells}칸. "
+            "유예 로직이 안 걸렸거나 색이 훼손됐다.")
     else:
         rec(PASS, "발급기한 유예",
-            f"'기한 전' {n}건 · 매트릭스 유예 색 {grace_cells}칸 "
+            f"'기한 전' {n}건 = 기대 · 매트릭스 유예 색 {got_cells}칸 = 기대 "
             f"(직전 달 {label} 유예 구간: {expect})")
 
 
@@ -704,7 +761,8 @@ def check_config_single_source(cfg):
         v = re.escape(val)
         for name, src in py.items():
             if re.search(rf'\[\s*["\']{v}["\']\s*\]', src) or \
-               re.search(rf'create_sheet\(\s*["\']{v}["\']', src):
+               re.search(rf'create_sheet\(\s*["\']{v}["\']', src) or \
+               re.search(rf'\.title\s*=\s*["\']{v}["\']', src):   # 첫 시트 이름 지정(7차 #4)
                 bad.append(f"{name}: 시트명 '{val}' 로 시트 조회 — sheets.{key} 하드코딩")
         for name, src in docs.items():
             if re.search(rf'\|\s*{v}\s*\|', src) or re.search(rf'`{v}`', src):
@@ -767,6 +825,9 @@ def main():
     df = clip_period(df[df["받는자번호"] == cfg["my_biz"]["biz_no"]],
                      month_range(as_of), as_of)
     drop_split_offsets(df)      # build_report 와 같은 규칙을 써야 대사가 맞는다
+    # 등급 재산출 대조·유예 검사가 쓰는 기대값. build_report 와 같은 함수·같은 인자(--strict 포함).
+    facts, _months = build_facts(df, vendors, as_of, cfg)
+    rows = grade_all(facts, as_of, cfg)
 
     check_paths(cfg)
     check_config_single_source(cfg)
@@ -781,12 +842,13 @@ def main():
         check_offsets(wb, cfg)
         check_unlisted(wb, cfg, vendors)
         check_grades(wb, cfg, vendors)
+        check_grade_recompute(wb, cfg, rows, as_of)
         check_state(wb, cfg)
         check_resolved(wb, cfg)
-        check_grace(wb, cfg, as_of)
+        check_grace(wb, cfg, as_of, facts, rows)
     else:
         # 건너뛴 검사도 하나씩 SKIP 으로 남긴다. 합쳐서 한 줄로 적으면 요약의
-        # 검사 개수가 평소(18)와 달라져 "검사가 사라졌다" 와 구분이 안 된다.
+        # 검사 개수가 평소(19)와 달라져 "검사가 사라졌다" 와 구분이 안 된다.
         for name in SHEET_CHECKS:
             rec(SKIP, name, "시트 구성 FAIL 로 건너뜀")
 

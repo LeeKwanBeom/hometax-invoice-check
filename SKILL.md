@@ -94,8 +94,16 @@ push 직후 다시 받으면 옛 파일이 내려온다. codeload 는 캐시되�
 
 ```bash
 cd /home/claude/hometax
-python3 scripts/check_input.py /mnt/user-data/uploads
+U=/mnt/user-data/uploads; O=/mnt/user-data/outputs   # O 는 실행마다 다른 폴더를 권장(같은 날 재실행이 같은 파일명에 덮어쓴다)
+python3 scripts/check_input.py $U \
+  && python3 scripts/build_report.py --uploads $U --out $O \
+  && python3 scripts/validate.py "$(ls -t $O/*.xlsx | head -1)" --uploads $U
 ```
+
+3·4·5단계는 이 한 줄이 전부다(2026-09-27 실측: 따로 돌린 것과 결과 동일, 도구 호출 3→1).
+`&&` 라서 check_input 이 FAIL(종료코드 1)이면 리포트를 만들지 않고 멈춘다 — 아래 FAIL 규칙이
+그대로 지켜진다. `--as-of YYYY-MM-DD` / `--strict` 를 쓸 거면 **세 명령 모두에** 같은 값을
+붙인다(check_input 은 `--as-of` 만 받는다).
 
 과거 시점을 재현할 때는 `--as-of YYYY-MM-DD` 를 붙인다. **4단계에서 `--as-of` 를
 쓸 거면 여기에도 같은 날짜를 준다.** 안 그러면 검증은 오늘 기준, 리포트는 과거
@@ -111,9 +119,7 @@ WARN 은 진행해도 되지만 리포트를 줄 때 함께 언급한다.
 
 ### 4단계. 리포트 생성
 
-```bash
-python3 scripts/build_report.py --uploads /mnt/user-data/uploads --out /mnt/user-data/outputs
-```
+명령은 3단계 한 줄의 두 번째 항(`build_report.py`)이다. 옵션:
 
 | 옵션 | 언제 |
 |---|---|
@@ -130,17 +136,15 @@ python3 scripts/build_report.py --uploads /mnt/user-data/uploads --out /mnt/user
 
 ### 5단계. 산출물 검증 — 건너뛰지 말 것
 
-```bash
-python3 scripts/validate.py /mnt/user-data/outputs/<생성된파일>.xlsx --uploads /mnt/user-data/uploads
-```
+명령은 3단계 한 줄의 세 번째 항(`validate.py`)이다. `ls -t` 가 방금 만든 최신 xlsx 를
+잡으므로 `--out` 이 실행별 폴더면 안전하다.
 
 **4단계에서 `--as-of` 나 `--strict` 를 줬으면 여기에도 똑같이 준다.**
 안 주면 검증기가 다른 기준으로 판단해서 멀쩡한 산출물에 FAIL 을 낸다
 (strict 산출물은 '기한 전'이 0건인 게 정상인데, 그걸 유예 로직 고장으로 오판한다).
 
-```bash
-python3 scripts/validate.py <파일>.xlsx --uploads /mnt/user-data/uploads --strict
-```
+예: `--strict` 로 만들었으면 3단계 한 줄의 `build_report.py … --strict` 와
+`validate.py … --strict` 에 함께 붙인다.
 
 **FAIL 이 있으면 산출물을 사용자에게 주지 않는다.**
 검증기는 0건 매칭을 PASS 로 넘기지 않는다. "검사 대상을 못 찾음"도 FAIL 이다.
@@ -166,7 +170,7 @@ python3 scripts/validate.py <파일>.xlsx --uploads /mnt/user-data/uploads --str
 | `기한 전` | 발급기한이 아직 남음 | 기다린다 |
 | `단발·비정기` | 정기 거래가 아니라 결번에 의미가 없음 | 무시 |
 | `정상` | 결번 없음 | 무시 |
-| `거래 종료` | `vendors.json` 에 `until` 로 등록됨 — 점검 대상 아님 | 무시. 아직 거래 중인데 여기 뜨면 `until` 을 지운다 |
+| `거래 종료` | `vendors.json` 의 `until` 이 **지난** 곳(실행월 이전) — 점검 대상 아님. 미래 `until` 은 아직 거래 중으로 결번 판정을 그대로 받는다 | 무시. 아직 거래 중인데 여기 뜨면 `until` 을 지운다 |
 | `해결` | 직전 실행의 `확인 필요` 가 이번엔 정상 | 확인만. 다음 실행부터 안 보인다 |
 
 판정 논리를 손보기 전에는 `references/judgment-rules.md` 를 먼저 읽는다.
@@ -228,6 +232,7 @@ python3 scripts/push.py <토큰> --code --dry-run # 뭐가 바뀌는지 먼저 �
 | `--add-vendor <번호...>` | vendors.json 에 거래처를 추가하고 바로 올린다 |
 | `--ignore-vendor <번호...>` | config `ignore_suppliers` 에 넣어 '추가 권장' 재권유를 끈다 |
 | `--cycle <값>` | `--add-vendor` 로 넣을 cycle. 기본 `매월` |
+| `--branch <이름>` | 그 브랜치에 올린다. 없으면 main 에서 만든다(조용히 main 으로 가지 않음). **수정 회차는 브랜치에만** — main 은 검증 뒤 사용자가 합친다. `--dry-run` 이면 만들지 않고 main 대비 비교만 |
 
 ### 대상외 목록에서 바로 등록·제외하기
 
@@ -240,7 +245,7 @@ python3 scripts/push.py <토큰> --ignore-vendor 212-04-59010
 ```
 
 - 하이픈은 있어도 되고 없어도 된다. 이미 등록·제외된 번호는 건너뛴다.
-- `--add-vendor` 는 `name` 을 비워 둔다. 리포트를 다시 만들면 자료에서 채워진다.
+- `--add-vendor` 는 `name` 을 비워 둔다. 다음 리포트에서 자료의 상호로 채워진다(고정 표기는 vendors.json 에 직접 적는다 — 그 값이 우선).
 - 목록만 고치고 끝나지 않는다. 고친 파일이 바로 올라간다.
 - `--dry-run` 을 같이 쓰면 **무엇이 추가·제외될지 화면에만 찍고 파일은 안 고친다.**
   올리지도 않는다. 번호를 제대로 붙였는지 먼저 볼 때 쓴다.
@@ -416,5 +421,6 @@ scripts/push.py            state·vendors·code 저장소 반영
 state/last-run.json        직전 실행 결과 (자동 생성)
 tests/                     엣지케이스 테스트 + 샘플 파일
 audit/last-audit.md        직전 점검 기준선 (1단계에서 함께 읽는다)
+audit/checklist.md         정기 점검표 정본 (점검 회차만 읽는다)
 install/SKILL.md           설치용 얇은 부트스트랩. 이걸 스킬에 재업로드한다
 ```

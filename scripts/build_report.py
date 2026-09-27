@@ -97,7 +97,11 @@ def _one(sid, v, g, months, as_of, cfg, listed):
         last, elapsed = None, None
 
     return {
-        "biz_no": sid, "name": v["name"], "cycle": v.get("cycle", ""),
+        # name 이 비어 있으면(--add-vendor 로 넣은 곳) 자료의 상호로 채운다(7차 #2).
+        # 고정 표기가 필요하면 vendors.json 에 직접 적는다 — 그 값이 우선이다.
+        "biz_no": sid,
+        "name": v["name"] or (str(g["상호"].iloc[-1]) if len(g) else ""),
+        "cycle": v.get("cycle", ""),
         "note": v.get("note", ""), "listed": listed,
         "cells": cells, "got": got, "missing": missing,
         "cancelled": cancelled, "grace": grace,
@@ -626,6 +630,10 @@ def main():
           f"대상외 {sum(1 for f in facts if not f['listed'])}곳")
     print(f"확인 필요 {n.get('확인 필요',0)} · 기한 전 {n.get('기한 전',0)} · "
           f"단발 {n.get('단발·비정기',0)} · 정상 {n.get('정상',0)} · 해결 {n.get('해결',0)}")
+    for r in rows:      # S1: 확인 필요 행을 콘솔에도 — 채팅 요약용 즉석 openpyxl 코드를 없앤다
+        if r["grade"] == "확인 필요":
+            print(f"  ! {fmt_biz(r['biz_no'])} {r['name']} · 결번 {_labels(r['gap'], as_of) or '-'}"
+                  f" · {r.get('status', '')} · 최종수취 {r['last']} · {r['kind']}")
     _print_deadline(facts, as_of, cfg)
     _print_reco(facts, cfg)
     print(f"저장: {path}")

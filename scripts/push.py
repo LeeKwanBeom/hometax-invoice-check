@@ -26,6 +26,7 @@
     python3 scripts/push.py <토큰> --code              # 코드까지 (테스트 통과 시)
     python3 scripts/push.py <토큰> --code --dry-run    # 뭐가 바뀌었는지만 확인
     python3 scripts/push.py <토큰> --only vendors
+    python3 scripts/push.py <토큰> --only code --branch fix-20260927   # 수정 회차: 브랜치에만 올린다
 """
 import argparse
 import base64
@@ -38,11 +39,12 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import fmt_biz
+from common import fmt_biz, biz_checksum_ok, norm_biz
 
 REPO = "LeeKwanBeom/hometax-invoice-check"
-BRANCH = "main"
-API = f"https://api.github.com/repos/{REPO}/contents"
+BRANCH = "main"          # 기본값. --branch 로 덮어쓴다. 수정 회차는 fix-<날짜> 브랜치에만 올린다
+REPO_API = f"https://api.github.com/repos/{REPO}"
+API = f"{REPO_API}/contents"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -135,21 +137,54 @@ def api(method, url, token, payload=None):
         )
 
 
-def remote(path, token):
-    url = f"{API}/{urllib.request.quote(path)}?ref={BRANCH}"
+def remote(path, token, branch=None):
+    url = f"{API}/{urllib.request.quote(path)}?ref={branch or BRANCH}"
     cur = api("GET", url, token)
     if not cur:
         return None, None
     return cur.get("sha"), base64.b64decode(cur.get("content", ""))
 
 
-def put(path, content, sha, token, message):
+def put(path, content, sha, token, message, branch=None):
     payload = {"message": message,
                "content": base64.b64encode(content).decode(),
-               "branch": BRANCH}
+               "branch": branch or BRANCH}
     if sha:
         payload["sha"] = sha
     api("PUT", f"{API}/{urllib.request.quote(path)}", token, payload)
+
+
+def branch_sha(name, token):
+    """브랜치가 있으면 HEAD sha, 없으면 None. git/ref(단수)는 정확 일치만 돌려준다."""
+    r = api("GET", f"{REPO_API}/git/ref/heads/{urllib.request.quote(name)}", token)
+    return ((r or {}).get("object") or {}).get("sha") if r else None
+
+
+def ensure_branch(name, token, dry_run):
+    """
+    --branch 로 지정한 브랜치가 없으면 main 에서 만든다. 돌려주는 값은 **비교 기준 ref**.
+
+    조용히 main 으로 가지 않는다 — 생성이 실패하면 응답 코드와 함께 [중단]. dry-run 은
+    만들지 않고 "브랜치 없음 — 실제 실행 시 main 에서 생성" 만 찍고 main 대비 비교한다.
+    수정 회차가 브랜치에만 올리고 main 은 검증 뒤 사용자가 합치는 절차(skill-audit)용이다.
+    """
+    if name == BRANCH or branch_sha(name, token):
+        return name
+    if dry_run:
+        print(f"  브랜치 {name} 없음 — 실제 실행 시 {BRANCH} 에서 생성합니다. 아래 비교는 {BRANCH} 대비입니다.")
+        return BRANCH
+    base = branch_sha(BRANCH, token)
+    if not base:
+        raise SystemExit(f"[중단] {BRANCH} 의 sha 를 읽지 못해 브랜치 {name} 을 만들 수 없습니다.")
+    try:
+        api("POST", f"{REPO_API}/git/refs", token,
+            {"ref": f"refs/heads/{name}", "sha": base})
+    except SystemExit as e:
+        raise SystemExit(f"[중단] 브랜치 {name} 생성 실패 — {e}")
+    if not branch_sha(name, token):
+        raise SystemExit(f"[중단] 브랜치 {name} 생성 응답은 받았으나 조회되지 않습니다. 올리지 않습니다.")
+    print(f"  브랜치 {name} 생성 ({BRANCH} {base[:7]} 에서)")
+    return name
 
 
 # ---------------------------------------------------------------- 비교
@@ -255,12 +290,16 @@ def edit_vendor_lists(a):
     if a.add_vendor:
         vp = os.path.join(ROOT, "config", "vendors.json")
         d = json.load(open(vp, encoding="utf-8"))
-        have = {v["biz_no"] for v in d["vendors"]}
+        have = {norm_biz(v["biz_no"]) for v in d["vendors"]}
         added = []
         for raw in a.add_vendor:
             sid = re.sub(r"\D", "", raw)
             if len(sid) != 10:
                 print(f"  건너뜀  {raw} — 사업자번호가 10자리가 아닙니다")
+                continue
+            if not biz_checksum_ok(sid):
+                # 오타 번호를 올리면 다음 check_input 이 체크섬 FAIL 로 전체 실행을 막는다(7차 #3)
+                print(f"  건너뜀  {raw} — 사업자번호 체크섬 오류")
                 continue
             if sid in have:
                 print(f"  건너뜀  {fmt_biz(sid)} — 이미 등록돼 있습니다")
@@ -280,18 +319,25 @@ def edit_vendor_lists(a):
                   ensure_ascii=False, indent=2)
         for sid in added:
             print(f"  추가    {fmt_biz(sid)} · cycle={a.cycle}")
-        print("\n  상호(name)는 비어 있습니다. 리포트를 다시 만들면 자료에서 채워지며,\n"
-              "  고정 표기를 쓰려면 vendors.json 에서 직접 적으세요.")
+        print("\n  상호(name)는 비어 있습니다. 다음 리포트에서 자료의 상호로 채워집니다\n"
+              "  (고정 표기를 쓰려면 vendors.json 에 직접 적으세요).")
         return len(added)
 
     cp = os.path.join(ROOT, "config", "check-config.json")
     d = json.load(open(cp, encoding="utf-8"))
     cur = list(d.get("ignore_suppliers", []))
+    # ignore_suppliers 는 '추가 권장' 재권유만 끈다. vendors.json 에 남아 있는 거래처는
+    # 여기 넣어도 판정이 바뀌지 않으므로 받지 않는다(7차 #7).
+    listed = {norm_biz(v["biz_no"]) for v in json.load(
+        open(os.path.join(ROOT, "config", "vendors.json"), encoding="utf-8"))["vendors"]}
     new = []
     for raw in a.ignore_vendor:
         sid = re.sub(r"\D", "", raw)
         if len(sid) != 10:
             print(f"  건너뜀  {raw} — 사업자번호가 10자리가 아닙니다")
+            continue
+        if sid in listed:
+            print(f"  건너뜀  {fmt_biz(sid)} — 아직 vendors.json 에 등록돼 있습니다. 먼저 지우세요")
             continue
         if sid in cur:
             print(f"  건너뜀  {fmt_biz(sid)} — 이미 제외 목록에 있습니다")
@@ -328,13 +374,15 @@ def main():
                     help="실행 이력이 뒤로 가도 강행 (이력이 지워짐)")
     ap.add_argument("--add-vendor", nargs="+", metavar="사업자번호",
                     help="vendors.json 에 거래처를 추가한 뒤 push. "
-                         "이름·주기는 최신 산출물의 대상외 목록에서 가져온다. "
-                         "--ignore 와 같이 쓸 수 없다.")
+                         "상호는 다음 리포트에서 자료로 채워지고, cycle 은 --cycle. "
+                         "--ignore-vendor 와 같이 쓸 수 없다.")
     ap.add_argument("--ignore-vendor", nargs="+", metavar="사업자번호",
                     help="config 의 ignore_suppliers 에 넣어 '추가 권장' 재권유를 끈다. "
                          "의도적으로 점검 대상에서 뺀 거래처용.")
     ap.add_argument("--cycle", default="매월",
                     help="--add-vendor 로 추가할 때 넣을 cycle 값 (기본 매월)")
+    ap.add_argument("--branch", default=None, metavar="이름",
+                    help="이 브랜치에 올린다. 없으면 main 에서 만든다(수정 회차용). 기본 main")
     a = ap.parse_args()
 
     if a.add_vendor or a.ignore_vendor:
@@ -352,7 +400,9 @@ def main():
     else:
         groups = ["state", "vendors"] + (["code"] if a.code else [])
 
-    print(f"저장소: {REPO}@{BRANCH}")
+    branch = a.branch or BRANCH
+    ref = ensure_branch(branch, a.token, a.dry_run)      # 없으면 만든다. dry-run 은 main 대비 비교
+    print(f"저장소: {REPO}@{branch}" + (f"  (비교 기준 {ref})" if ref != branch else ""))
     print(f"묶음:   {', '.join(groups)}" + ("  (dry-run)" if a.dry_run else ""))
     print()
 
@@ -366,7 +416,7 @@ def main():
                 continue
             with open(local, "rb") as f:
                 content = f.read()
-            sha, old = remote(path, a.token)
+            sha, old = remote(path, a.token, ref)
             if same(old, content):
                 continue
             if path == "state/last-run.json":
@@ -413,7 +463,7 @@ def main():
     msg = a.message or f"update: {', '.join(p for p, _, _, _ in changed[:4])}" + \
         (" 외" if len(changed) > 4 else "")
     for path, content, sha, _ in changed:
-        put(path, content, sha, a.token, msg)
+        put(path, content, sha, a.token, msg, branch)
         print(f"  올림    {path}")
 
     print(f"\n{len(changed)}개 파일 반영 완료")

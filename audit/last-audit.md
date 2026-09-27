@@ -1,4 +1,117 @@
-# 점검 기준선
+# 7차 수정 기록 (2026-09-27 · 브랜치 `fix-20260927` · 진단과 같은 세션)
+
+> 사용자 지시(프롬프트 ②)로 **결함 1~10 · 개선안 1·2 · 속도 S1·S2 · 점검표 개정안 1·2·4·6~16(3 폐기, 5·14후반 계획)** 을 고쳤다.
+> 모든 변경은 브랜치 `fix-20260927` 에만 올렸고 **main 은 `3780abd`(7차 진단 1차 커밋) 그대로**다. main 병합은 검증 뒤 사용자가 한다.
+> 검증용 수령 명령: `python3 sync.py --ref refs/heads/fix-20260927 /home/claude/hometax-fix`
+> (부트스트랩이 받는 main 사본은 옛 코드다 — 검증 대상은 이 브랜치.)
+> 이월(사용자 결정): 개선안 3(state biz_no 정렬) · 4(state run_date > as_of 경고) · 5(FAIL 산출물 파일명) · S3(OPEN.md) · S4(dry-run 관행) · "다음 점검에서 대조할 것" 11(파일별 커밋).
+> 아래 "7차 정기점검 진단 기준선" 절은 진단 시점 그대로 보존한다(수정으로 달라진 숫자는 이 절에 적는다).
+
+## 원래 제안·지시를 바꾼 곳과 이유
+
+| 항목 | 지시·진단 제안 | 실제 구현 | 이유 |
+|---|---|---|---|
+| 결함 #6 | 114-116·157-159 만 SKIP 기록, 실측 "요약 18개" | 그 두 함수는 지시대로 SKIP 기록. 정상 실행의 검사 개수가 새 검사(등급 재산출 대조)로 **19** 가 됐으므로 헤더 미검출 요약도 **19** 로 맞췄다 | 처음엔 `check_matrix_months` 에도 '매트릭스 월 컬럼' SKIP 을 넣어 20 이 됐다(정상 19 보다 하나 많음). 되돌려 `매트릭스 헤더` FAIL 이 그 검사 자리를 대신하게 두었다 — 원칙은 "정상 실행과 같은 개수" 다 |
+| 결함 #1 · 개선안 1 | `check_grace` 의 `n == 0` 신호를 기대 건수 정확 일치로, 색 칸 신호는 "보조 유지", january 분기는 "가능하면 제거" | 기대 건수 정확 일치 + **색 칸도 정확 일치**(facts 에서 직전 달이 `grace` 상태인 행 수 == 매트릭스 유예 색 칸 수). january 분기 제거 | "0 이면 FAIL" 류의 임계 신호를 하나라도 남기면 같은 유형의 오탐이 다른 달에 재발한다. 두 신호 모두 기대값 비교로 바꾸면 월 특례가 필요 없다 |
+| 결함 #2 | push.py 331 문구 **삭제** | `"이름·주기는 최신 산출물의 대상외 목록에서 가져온다. "` 를 삭제하고 그 자리에 `"상호는 다음 리포트에서 자료로 채워지고, cycle 은 --cycle. "` 을 넣었다 | help 에 상호·cycle 이 어디서 오는지 한 줄은 있어야 `--cycle` 의 존재를 알 수 있다 |
+| 개선안 2 | `push.remote`·`push.put` 스텁 | `remote`·`put`·**`api`** 세 개 스텁(api 는 호출되면 AssertionError) | dry-run 경로가 `api` 를 직접 부르는 회귀까지 잡기 위해 |
+| 점검표 개정안 12 | 3행·244-247행 2회 커밋 규칙 | 247행 첫 문장 "둘 중 하나만 올리면…" 은 삭제하고 앞 문단 끝에 "커밋은 두 번, 파일은 둘 다" 로 흡수 | 같은 뜻을 두 번 적지 않기 위해 |
+| 점검표 개정안 1 | 11행 정정 뒤 머리말 5-11행 삭제 | 삭제(원문은 아래 "점검표에서 옮긴 기록") | 지시대로. 정정("3~8번")은 이 파일에만 남긴다 |
+| 부록 스크립트 | (지시: 파괴 실험 전부 재실행, 부록 갱신) | 부록을 7차 수정 후 버전(등급 재산출 파괴 3건 추가)으로 교체 | 다음 회차가 새 검사까지 재현하게 |
+
+## 항목별 수정 기록 (절·함수명 기준)
+
+| # | 파일 · 위치 | 무엇을 | 실측 |
+|---|---|---|---|
+| 0 | `scripts/push.py` — 모듈 상수 `BRANCH = "main"`(기본값 유지) · `REPO_API` 신설 · `remote(path, token, branch=None)` · `put(..., branch=None)` · **`branch_sha()` · `ensure_branch()` 신설** · `main()` `--branch` 옵션, `ref = ensure_branch(branch, a.token, a.dry_run)` → 비교는 `ref`, 업로드는 `branch` · 독스트링 사용법 · SKILL.md 7단계 옵션 표 `--branch` 1행 | 브랜치가 없으면 `GET git/ref/heads/main` sha 로 `POST git/refs` 생성, 실패·조회 불가 시 `[중단] 브랜치 … 생성 실패 — <응답 코드 메시지>`. dry-run 은 생성 없이 "브랜치 fix-20260927 없음 — 실제 실행 시 main 에서 생성합니다. 아래 비교는 main 대비입니다" 출력. GROUPS·테스트 게이트·state 가드 무변경 | `--only code --branch fix-20260927 --dry-run` 목록 = 변경 파일 9개(아래) → 실제 push 로 브랜치 생성·업로드 → `git ls-remote` main `3780abd` 불변 + `refs/heads/fix-20260927` 존재 → `sync.py --ref refs/heads/fix-20260927` 수령본 push.py md5 = 로컬(채팅 보고에 해시) |
+| 1 | `scripts/validate.py` — **`check_grade_recompute()` 신설**(`check_grades` 뒤) · `check_grace(wb, cfg, as_of, facts, rows)` 재작성 · `main()` 에서 `facts, _ = build_facts(df, vendors, as_of, cfg)` / `rows = grade_all(facts, as_of, cfg)` 를 한 번 만들어 두 검사에 전달 · `SHEET_CHECKS` 에 "등급 재산출 대조" · import `Counter`, `build_facts, grade_all, _labels` | 기대 `(공급자번호, 등급, 결번월 표기)` **다중집합**(Counter) vs 시트의 '해결' 제외 행. 누락 → FAIL, 초과·불일치 → FAIL, 0=0 → PASS "(기대 0 · 시트 0)". 독스트링에 "같은 함수를 쓰므로 판정 논리 오류는 tests 몫" 기록. `check_grace`: '기한 전' 시트 건수 == 기대 건수, 매트릭스 직전 달 열 유예 색 칸 == facts grace 칸, 월 특례 없음 | 9/27 기본 `FAIL 0 · SKIP 1 · PASS 18` · `--strict --no-state` `FAIL 0 · SKIP 3 · PASS 16` · `--as-of 2026-01-05` `FAIL 0 · SKIP 2 · PASS 17`(등급 재산출 "기대 0 · 시트 0") · **`--as-of 2026-02-05` `FAIL 0 · SKIP 1 · PASS 18`**(진단 때 FAIL 1). 파괴: 미수취목록 첫 행 삭제 FAIL / 첫 행 복제 FAIL / '정상'→'단발·비정기' 교체 FAIL / 9/6 산출물 '기한 전'→'정상' **FAIL 유지** / 1월 전년 12월 열 유예 색 제거 **FAIL 유지**(`유예 색 0칸 vs 기대 29칸`) |
+| 2 | `scripts/build_report.py` `_one()` `"name": v["name"] or (str(g["상호"].iloc[-1]) if len(g) else "")` · `scripts/push.py` `edit_vendor_lists()` 콘솔 문구 "다음 리포트에서 자료의 상호로 채워집니다(고정 표기를 쓰려면 vendors.json 에 직접 적으세요)" · argparse help 교체 · `SKILL.md` 243행 같은 표현으로 통일 | | vendors 사본에 `name: ""` 212-04-59010 → 매트릭스 `['212-04-59010', '유성빌딩', …]` · 미수취목록 `[…, '212-04-59010', '유성빌딩', …]` · state `name: '유성빌딩'` 셋 다 자료 상호. grep `대상외 목록에서 가져온다` 0건, `자료에서 채워`·`자료의 상호로 채워` 남은 곳 SKILL.md 248 · push.py 322 두 곳 — 둘 다 이제 참 |
+| 3 | `scripts/push.py` `edit_vendor_lists()` add 루프에 `if not biz_checksum_ok(sid): 건너뜀 … 사업자번호 체크섬 오류` · import `biz_checksum_ok` | | `--add-vendor 999-99-99999 --dry-run` → `건너뜀  999-99-99999 — 사업자번호 체크섬 오류` / `[중단] 추가된 거래처가 없습니다.` |
+| 4 | `scripts/validate.py` `check_config_single_source()` (b-5) 코드 패턴에 `re.search(rf'\.title\s*=\s*["\']{v}["\']', src)` | | `ws.title = "매트릭스"` 사본 → `[FAIL] 단일 출처 위반 1곳` (진단 때 PASS) · 원본 PASS(오탐 0). 파괴 실험 표에 행 상시화 |
+| 5 | `references/judgment-rules.md` 86행 · `SKILL.md` 169행 | "`until` 이 **지난** 곳(실행월 이전). 미래 `until` 은 아직 거래 중 — 결번 판정을 그대로 받는다" | grep `` `until` 등록됨 `` · `` `until` 로 등록됨 `` → SKILL.md·README·install·references **0건**(audit/ 의 인용문은 제외 대상) |
+| 6 | `scripts/validate.py` `check_matrix_blank_and_fill()` `if not r:` → `rec(SKIP, "미수취=공란 검사"…)` + `rec(SKIP, "전액취소=0+노랑 검사"…)` · `check_vendor_coverage()` `if not r:` → `rec(SKIP, "점검 대상 누락 검사"…)` · `check_grades()` PASS 문구를 `mrow` 유무로 분리 · `check_matrix_months()` 의 `매트릭스 헤더` FAIL 이 월 컬럼 자리를 대신함(주석) | | 매트릭스 헤더 `공급자 번호` 사본: 요약 **19개**(= 정상 19) `FAIL 4 · SKIP 4 · PASS 11`. 등급 분류 문구 `등급값·정렬 정상 · 결번 표기 미확인(매트릭스 헤더 미검출)` |
+| 7 | `scripts/push.py` `edit_vendor_lists()` ignore 루프 앞에 `listed = {norm_biz(v["biz_no"]) …}` 읽고 `if sid in listed: 건너뜀 … 아직 vendors.json 에 등록돼 있습니다. 먼저 지우세요` | | `--ignore-vendor 869-35-00721 --dry-run` → 그 문구 / `[중단] 제외 목록에 추가된 항목이 없습니다.` |
+| 8 | `scripts/push.py` argparse help `--ignore-vendor 와 같이 쓸 수 없다.` | | grep `--ignore 와` 0건 |
+| 9 | `SKILL.md` "저장소 구성" `audit/checklist.md         정기 점검표 정본 (점검 회차만 읽는다)` 1행 | | 424행에 존재 |
+| 10 | `scripts/check_input.py` `check_vendors()` `vmap = {norm_biz(v["biz_no"]): v …}` · `scripts/push.py` `edit_vendor_lists()` `have = {norm_biz(v["biz_no"]) …}` · import `norm_biz` | | 제이푸드 구 번호 `"559-96-01523"` 사본에서 `[OK  ] 사업자번호 변경 처리 완료 1건`, WARN 재발 없음 |
+| 11 | `tests/test_edge_cases.py` **`t_dry_run_readonly()` 신설**(`t_no_upload_files` 뒤, main 목록 등록) — sandbox 사본의 `push.py` 를 `importlib` 로 읽어 `remote`·`put`·`api` 스텁, `--add-vendor 2120459010 --dry-run` / `--add-vendor 999-99-99999 --dry-run` / `--ignore-vendor 8693500721 --dry-run` 실행 | 단언: `config/` md5 동일 · `put 0회 · remote 0회 · api 0회` · '추가 예정'+exit 0 · '체크섬 오류' · '등록돼 있습니다' | 5건 전부 ok. 테스트 총 **26 t_ · 개별 체크 112 · 실패 0 · 54s** |
+| 12 | `scripts/build_report.py` `main()` `_print_deadline` 호출 직전 S1 4줄(진단 실험 원문 그대로) · `tests` `t_run_variants` 에 `콘솔 '!' 줄 수 == 확인 필요 건수` 단언 | | 9/6 경로 `3줄 vs 3건` ok. 9/27 콘솔 9줄. 결과 집합 = 진단 기준선(아래 표) |
+| 13 | `SKILL.md` 3단계 코드 블록을 `&&` 한 줄로(`U=`·`O=` 변수, 실행별 `--out` 권장 주석), 4단계·5단계 코드 블록 3개는 "3단계 한 줄의 두 번째·세 번째 항" 문장으로, `--as-of`·`--strict` 세 곳 동시 지정 명시. 코드 변경 0 | | `<생성된파일>` grep 0건. 코드펜스 짝수 |
+| 14 | `audit/checklist.md` **v7** — 개정안 1(버전 줄·머리말 후속 조치 문단 삭제) · 2(범위 밖) · 4(실행별 --out) · 6(검사 고유명 기준, 7차 19+2) · 7(D 항목 교체) · 8(A 옵션 4개 + B `ignore_suppliers`) · 9(0단계 (2) 후속 조치 문장 대조) · 10(F 02-05) · 11(H 축소) · 12(머리말·마무리 2회 커밋) · 13(`[의도된 동작]` 10건 · `[되돌리면 안 되는 것]` 15행 · skill-audit ②③ 한 줄) · 14(효율 기준선 표 상시 + 기준선 형식) · 15(4줄 삭제 → 프롬프트 ①) · 16([운영 조건] 읽는 파일·분량) · 5·14후반 "계획(다음 회차)" · 3 폐기(미기재) | 281 → 306행 | grep `같은 push 로` · `같은 push.py --code 로` · `None과 빈 문자열` · `버전: 6차` · `1·3~8번` · `붙여넣을 4줄` 전부 **0건** |
+
+변경 파일(원본 `3780abd` 대비 diff -rq): `SKILL.md` · `references/judgment-rules.md` · `scripts/build_report.py` · `scripts/check_input.py` · `scripts/push.py` · `scripts/validate.py` · `tests/test_edge_cases.py` + `audit/last-audit.md` · `audit/checklist.md` = **9개**. `state/last-run.json`·`config/vendors.json`·`config/check-config.json`·fixtures·`install/SKILL.md`·`README.md`·`sync.py`·`common.py` 무변경(state 는 매 실행 뒤 복구, md5 `46f8542a…` 원격과 동일).
+
+문법: `py_compile` common·check_input·build_report·validate·push·sync·test_edge_cases 7개 OK. 코드펜스 짝수(SKILL·README·install·references 3·checklist·last-audit). UTF-8 OK.
+
+## 속도·효율 — 전/후 (기준선 표와 같은 열)
+
+| 실행 이름 | 전(A, 진단) | 후(B, 수정) | 결과 집합 |
+|---|---|---|---|
+| base_today | 3.10s · 도구 호출 3 · 즉석 코드 0 (+요약용 openpyxl 11줄·1회) · `FAIL 0 · SKIP 1 · PASS 17` | 3.46s(검사 +1) · **한 줄 실행 1회 · 즉석 코드 0** · `FAIL 0 · SKIP 1 · PASS 18` | 튜플 22/22 동일 · 월별 합 동일 · state 순서 9곳 동일 |
+| strict_nostate | 3.10s · `FAIL 0 · SKIP 3 · PASS 15` | 3.49s · `FAIL 0 · SKIP 3 · PASS 16` | 동일 |
+| asof_0105 | 2.22s · `FAIL 0 · SKIP 2 · PASS 16` | 2.27s · `FAIL 0 · SKIP 2 · PASS 17` | 튜플 3/3 동일 |
+| asof_0205 | 2.35s · **`FAIL 1` · SKIP 1 · PASS 16** | 2.34s · **`FAIL 0` · SKIP 1 · PASS 18** | 튜플 3/3 동일 |
+| tests | 49.9s · 25 t_ · 106 체크 | 54s · 26 t_ · 112 체크 · 실패 0 | |
+
+진단 기준선 값(컨테이너 `base7/baseline7.json` 에서 옮겨 적음): base_today 튜플 22 = 확인 필요 9 · 단발 3 · 정상 6 · 거래 종료 4 / 월별 합 1월 53,992,788 · 2월 70,700,362 · 3월 47,403,992 · 4월 49,796,017 · 5월 44,242,599 · 6월 52,723,343 · 7월 101,251,737 · 8월 63,848,349 · 9월 0 / state 순서 2648135761 · 8948802963 · 7328801079 · 7248501096 · 1198687135 · 4029701369 · 3061253427 · 2148796237 · 8693500721. 수정 후 전부 동일.
+validate 요약이 +1 PASS 인 것은 새 검사 "등급 재산출 대조" 때문이다(정상 요약 18 → **19**).
+
+## 파괴 실험 재실행 (수정 후 · 고유 검사명 19 + 실패 경로 전용 2)
+
+진단 회차 표의 30회 전부 재실행 + 등급 재산출 대조 4회. 결과: **파괴 시 FAIL 전부 유지**, 달라진 곳은 아래뿐.
+
+| 검사 · 파괴 방법 | 진단 때 | 수정 후 |
+|---|---|---|
+| 단일 출처 (b-5) `ws.title = "매트릭스"` | PASS(범위 밖) | **FAIL** `단일 출처 위반 1곳` |
+| 매트릭스 헤더 미검출 사본 요약 | 15개 | **19개**(SKIP: 미수취=공란·전액취소·점검 대상 누락) |
+| 시트 구성 FAIL 시 요약 | `FAIL 1 · SKIP 14 · PASS 3` | `FAIL 1 · SKIP 15 · PASS 3`(등급 재산출 대조 포함) |
+| 등급 재산출 대조 — 첫 데이터 행 삭제 / 첫 행 복제 / '정상'→'단발·비정기' | (검사 없음) | FAIL / FAIL / FAIL |
+| 등급 재산출 대조 — 1월 산출물 무변경 | | PASS "기대 0 · 시트 0" |
+| 발급기한 유예 — 9/6 '기한 전'→'정상' / 1월 유예 색 제거 | FAIL / FAIL | FAIL(`시트 0건 vs 기대 6건`) / FAIL(`유예 색 0칸 vs 기대 29칸`) |
+| 발급기한 유예 — 9/27 무변경 | PASS(expect=False 비활성) | PASS(`'기한 전' 0건 = 기대 · 유예 색 0칸 = 기대`) — 이제 비활성 구간 없음 |
+
+## 점검표에서 옮긴 기록 (checklist.md v6 머리말 5-11행 원문 — 개정안 1)
+
+```
+**후속 조치(2026-09-07 저녁)**: 결함 #5·#20·#28·#29·#30·N4·N6·#14·#16·#19·#21·#27 과
+개선안 1·2·3·5 처리됨. validate 검사가 늘었으니 파괴 실험 목록을 다시 뽑을 것.
+#15 · #18 · 개선안 4 도 같은 날 심야에 종결. **6차 미해결 0건.**
+`push.py` 에 `--add-vendor` / `--ignore-vendor` 가 생겼으니 A 항목 옵션 목록에 포함해 확인할 것.
+
+**반영 상태**: 6차 개정안 12건 중 **2·9·10·11·12번 반영 완료** (대상 파일 목록에 checklist.md · --as-of 연도와 state 백업 · 토큰 선요청 · 마무리 순서 push 우선 · 실 데이터 판정 기준).
+1·3~8번과 #18·#28 방향은 사용자 채택 대기 중이며 아직 반영하지 않았다.
+```
+정정: 1번(`--as-of` 연도)도 6차 사후에 이미 반영돼 있었다(F 항목). 즉 v6.1 = 1·2·9·10·11·12 반영, 3~8 대기 → 7차에서 2·4·6·7·8 채택, 3 폐기, 5 계획.
+
+## 점검표 갱신 이력 (checklist.md)
+
+- 6차 2026-09-07 — 첫 이관. 사후에 1·2·9·10·11·12 반영(버전 줄은 "6차" 그대로였음).
+- **7차 2026-09-27 — v7.** 개정안 1·2·4·6~16 반영(14 는 효율 표 상시화만), 3 폐기, 5·14후반 "계획(다음 회차)". 281 → 306행. 2차 커밋(브랜치 `fix-20260927`).
+
+## 검증 회차가 볼 것 (재현 목록)
+
+브랜치 수령: `python3 sync.py --ref refs/heads/fix-20260927 /home/claude/hometax-fix`. 기준값: main `3780abd` 불변 · 변경 파일 9개 · 테스트 26 t_ / 112 체크 · validate 정상 요약 19(실패 경로 전용 2 = 21).
+1. 위 항목별 표의 실측 전부(0~14). 특히 `--as-of 2026-02-05` FAIL 0, 9/6 산출물 '기한 전'→'정상' FAIL, 1월 유예 색 제거 FAIL, 미수취목록 행 복제 FAIL, `ws.title` 사본 FAIL, 매트릭스 헤더 미검출 요약 19개.
+2. `tests/test_edge_cases.py` 전체 통과(26 t_ · 112 체크) · `py_compile` 7개 · 코드펜스 짝수 · UTF-8.
+3. 옛 문구 grep 0건: `` `until` 등록됨 `` · `` `until` 로 등록됨 `` · `대상외 목록에서 가져온다` · `--ignore 와` · `<생성된파일>` (SKILL·README·install·references·scripts·tests) / checklist: `같은 push 로` · `같은 push.py --code 로` · `None과 빈 문자열` · `버전: 6차` · `1·3~8번`.
+4. `--branch`: `--only code --branch fix-20260927 --dry-run` 이 "변경 없음"(브랜치와 동일) · 존재하지 않는 브랜치 이름으로 `--dry-run` 하면 "브랜치 … 없음 — 실제 실행 시 main 에서 생성" 문구와 main 대비 비교 · main HEAD 불변.
+5. 결과 집합: 9/27 기본 실행의 미수취목록 튜플 22 · 월별 합 · state 순서가 위 "속도·효율" 절의 값과 같은지(state 는 백업·복구).
+6. 의도 검증(B): 위 "원래 제안·지시를 바꾼 곳" 6건이 진단의 의도와 맞는지 한 줄씩.
+
+## 이번 회차에 새로 본 것 (다음 회차 후보 — 고치지 않았다)
+
+- `push.py` `_scan()` 이 `__pycache__/*.pyc` 를 거르지 않는다(숨김 파일만 제외). `py_compile`·테스트 실행 뒤 `tests/__pycache__/` 가 생기면 `--code` 에 딸려 올라간다. 이번 회차는 push 전에 `find . -name __pycache__ -exec rm -rf` 로 지웠다. `.gitignore` 의 `__pycache__/`·`*.pyc` 를 `_scan` 이 존중하게 하는 것이 결함 후보(다음 진단 회차에 인용과 함께).
+- `check_input.check_cycle` 의 WARN 문구는 `v['name']` 을 쓰므로 `--add-vendor` 직후 첫 check_input 에서는 상호가 빈칸이다(리포트·state 는 #2 로 채워짐). 낮음.
+
+## 실사용에서 볼 것 (main 병합 뒤 첫 실행)
+
+- 콘솔 `  ! ` 줄이 채팅 요약 표의 원천이 됐다 — openpyxl 즉석 코드 없이 요약이 나오는지.
+- validate 요약이 19개(`등급 재산출 대조` 포함)인지, 10월 초 실행에서 '기한 전' 기대 건수와 시트 건수가 같은지(첫 실자료 검증).
+- `--branch` 없는 일반 push(state 만)가 종전과 같이 main 에 올라가는지.
+
+---
+
+# 7차 정기점검 진단 기준선 (2026-09-27 — 진단 시점 원문)
 
 > **7차 정기점검 (2026-09-27) — 진단만.** 고친 것 없음. 이 절이 최신 기준선이고, 6차 기록은
 > 아래 "이전 기록" 에 원문 그대로 보존한다. 채택 후 수정 회차는 브랜치 `fix-20260927`(예정) 에서.
@@ -310,7 +423,7 @@ A 스니펫(현재 6단계에 필요한 즉석 코드, 11줄): `load_config()` �
 
 **내가 고를 항목(사용자 채택용 번호)**: 결함 1~10 / 개선안 1~5 / 속도 S1·S2(합격), S3·S4(사용자 결정) / 점검표 개정안 1~16.
 
-### 부록 — validate 파괴 실험 스크립트 원문 (7차, 사본 /home/claude/exp_val 에서 실행)
+### 부록 — validate 파괴 실험 스크립트 원문 (7차 수정 후 버전 · 사본 /home/claude/exp_val 에서 실행 · 등급 재산출 대조 파괴 3건 포함)
 
 ```python
 """validate.py 검사별 파괴 실험 (사본 /home/claude/exp_val 에서만)."""
@@ -496,6 +609,22 @@ def unsorted(wb):
     ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"]); ws.cell(r+1, m["등급"]).value = "정상"
 p = mod(base, "unsorted", unsorted)
 l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 분류", "첫 행 등급을 '정상' 으로(정렬 뒤집힘)", l, s, "등급 분류")
+# 17b 등급 재산출 대조 (7차 신설)
+def del_row(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"]); ws.delete_rows(r + 1)
+p = mod(base, "row_del", del_row)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 재산출 대조", "미수취목록 첫 데이터 행 삭제", l, s, "등급 재산출")
+def dup_row(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"]); ws.append([c.value for c in ws[r + 1]])
+p = mod(base, "row_dup", dup_row)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 재산출 대조", "미수취목록 첫 데이터 행 복제(끝에 추가)", l, s, "등급 재산출")
+def swap_grade(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"])
+    for i in range(r + 1, ws.max_row + 1):
+        if ws.cell(i, m["등급"]).value == "정상": ws.cell(i, m["등급"]).value = "단발·비정기"; return
+p = mod(base, "grade_swap", swap_grade)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 재산출 대조", "'정상' 한 행의 등급을 '단발·비정기' 로(정렬은 유지)", l, s, "등급 재산출")
+l, s, _ = validate(jan, "2026-01-05", st0105); rec("등급 재산출 대조 (1월 산출물)", "무변경 — 기대 0 · 시트 0 경로", l, s, "등급 재산출")
 # 18 실행 이력 비교
 st = json.load(open(st0927, encoding="utf-8")); st2 = copy.deepcopy(st); st2["flagged"] = st2["flagged"][:1]
 tmp = f"{OUT}/state_1.json"; json.dump(st2, open(tmp, "w", encoding="utf-8"), ensure_ascii=False)
@@ -509,7 +638,7 @@ p = mod(jan, "jan_clear_status", clear_status)
 l, s, _ = validate(p, "2026-01-05", BACKUP); rec("해결 집계", "1월 산출물 해결 행의 상태 비움 (state=3곳 이력)", l, s, "해결 집계")
 l, s, _ = validate(p, "2026-01-05", BACKUP); res.append(("  (같은 파일 실행 이력 비교 줄)", "", " | ".join(pick(l, "실행 이력")), s))
 # 20 발급기한 유예
-l, s, _ = validate(base, "2026-09-27", st0927); rec("발급기한 유예 (9/27 기준)", "무변경 — 8월분 기한(9/10) 지나 expect=False", l, s, "발급기한 유예")
+l, s, _ = validate(base, "2026-09-27", st0927); rec("발급기한 유예 (9/27 기준)", "무변경 — 8월분 기한(9/10) 경과, 기대 0=0", l, s, "발급기한 유예")
 def all_normal(wb):
     ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"])
     for i in range(r+1, ws.max_row+1):

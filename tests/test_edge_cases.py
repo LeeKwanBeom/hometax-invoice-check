@@ -154,6 +154,12 @@ def t_run_variants():
 
         r = run(base + ["--as-of", "2026-09-06"])
         check("기본 실행", r.returncode == 0, r.stderr.strip()[-200:])
+        # S1(7차): 콘솔의 '  ! ' 줄 수 == 확인 필요 건수. 채팅 요약이 이 줄을 그대로 쓴다.
+        import re as _re
+        n_action = int(_re.search(r"확인 필요 (\d+)", r.stdout).group(1))
+        n_lines = sum(1 for l in r.stdout.splitlines() if l.startswith("  ! "))
+        check("콘솔 '!' 줄 수 == 확인 필요 건수", n_lines == n_action,
+              f"{n_lines}줄 vs {n_action}건")
 
         r2 = run(base + ["--as-of", "2026-09-06", "--strict"])
         check("strict 모드 실행", r2.returncode == 0, r2.stderr.strip()[-200:])
@@ -633,6 +639,65 @@ def t_no_upload_files():
               (r2.stdout + r2.stderr).strip()[-200:])
 
 
+def t_dry_run_readonly():
+    """
+    push.py --dry-run 이 config/ 를 쓰지 않고 네트워크·put 호출도 없는지.
+    6차 후속 3차 이월. --add-vendor 체크섬 선검사(7차 #3)·--ignore-vendor 등록 거래처
+    거부(7차 #7)도 같은 자리에서 단언한다. 사본의 push.py 를 모듈로 읽어 ROOT 를 사본으로
+    두고, remote/put/api 를 스텁으로 바꿔 어떤 경우에도 GitHub 에 닿지 않게 한다.
+    """
+    print("\n[--dry-run 읽기 전용]")
+    import contextlib
+    import hashlib
+    import importlib.util
+    import io
+    with sandbox() as sb:
+        cfgdir = os.path.join(sb, "config")
+
+        def md5s():
+            return {f: hashlib.md5(open(os.path.join(cfgdir, f), "rb").read()).hexdigest()
+                    for f in sorted(os.listdir(cfgdir))}
+        before = md5s()
+        spec = importlib.util.spec_from_file_location(
+            "push_sb", os.path.join(sb, "scripts", "push.py"))
+        push_sb = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(push_sb)
+        calls = {"remote": 0, "put": 0, "api": 0}
+
+        def _remote(*a, **k):
+            calls["remote"] += 1
+            return None, None
+
+        def _put(*a, **k):
+            calls["put"] += 1
+
+        def _api(*a, **k):
+            calls["api"] += 1
+            raise AssertionError("dry-run 에서 네트워크 호출")
+        push_sb.remote, push_sb.put, push_sb.api = _remote, _put, _api
+        outs = {}
+        for name, argv in [("valid", ["--add-vendor", "2120459010", "--dry-run"]),
+                           ("badsum", ["--add-vendor", "999-99-99999", "--dry-run"]),
+                           ("listed", ["--ignore-vendor", "8693500721", "--dry-run"])]:
+            buf, old = io.StringIO(), sys.argv
+            sys.argv = ["push.py", "DUMMY-TOKEN"] + argv
+            try:
+                with contextlib.redirect_stdout(buf):
+                    rc = push_sb.main()
+            finally:
+                sys.argv = old
+            outs[name] = (rc, buf.getvalue())
+        check("dry-run 뒤 config/ md5 동일", md5s() == before)
+        check("put 0회 · remote 0회 · api 0회", not any(calls.values()), str(calls))
+        check("유효 신규 번호는 '추가 예정' · exit 0",
+              "추가 예정" in outs["valid"][1] and outs["valid"][0] == 0,
+              outs["valid"][1].strip()[-120:])
+        check("체크섬 오류 번호는 건너뜀", "체크섬 오류" in outs["badsum"][1],
+              outs["badsum"][1].strip()[-120:])
+        check("등록된 거래처는 --ignore-vendor 에서 건너뜀",
+              "등록돼 있습니다" in outs["listed"][1], outs["listed"][1].strip()[-120:])
+
+
 def t_zero_rows_not_resolved():
     """기간 안 자료가 0건이면 직전 '확인 필요' 를 '해결' 로 만들지 않는다."""
     print("\n[자료 0건 = 해결 아님]")
@@ -658,7 +723,7 @@ def main():
                t_sheet_headers, t_duplicate_uploads, t_validate_strict,
                t_december, t_as_of_clipping, t_validate_catches_regressions,
                t_config_single_source, t_cycle_warning,
-               t_no_upload_files, t_zero_rows_not_resolved]:
+               t_no_upload_files, t_dry_run_readonly, t_zero_rows_not_resolved]:
         try:
             fn()
         except Exception as e:
