@@ -1,5 +1,540 @@
 # 점검 기준선
 
+> **7차 정기점검 (2026-09-27) — 진단만.** 고친 것 없음. 이 절이 최신 기준선이고, 6차 기록은
+> 아래 "이전 기록" 에 원문 그대로 보존한다. 채택 후 수정 회차는 브랜치 `fix-20260927`(예정) 에서.
+> 이번 회차는 **한 세션이 도구 호출 한도로 두 번에 걸쳐** 진행했다(1차: 0~3단계 실측 → 채팅 중간보고,
+> 2차: 나머지 실측·이 파일·push). 컨테이너 산출물(`/home/claude/out7`, `/home/claude/base7`)은 그대로였다.
+
+점검일: 2026-09-27 (7차 — 정기점검, 진단 회차)
+직전: 2026-09-07 6차(진단 커밋 `0d911fa`, 후속 4차까지 `b2fc5de`) + 2026-09-20 실사용 1회(`7a99a0f`, state 만 갱신)
+
+**재확인 결과: 해결됨 28건 / 미해결 6건(미실측 1 포함) / 근거없음 0건 / 신규 결함 10건**
+결함 10건(신규 8 + 이월 메모에서 승격 2) / 개선안 5건 / 속도·효율 후보 5건(합격 2·사용자 결정 2·후보 아님 1) / 인용불가로 제외 0건
+
+> HEAD `7a99a0f` = 지시와 일치. `b2fc5de→7a99a0f` diff 는 `state/last-run.json` 1파일(+7/−7, 같은 3곳
+> 순서만 변경). 6차 후속이 "수정함" 으로 적은 항목 중 미해결로 나온 것 **0건**.
+
+## 이번 회차 실측 조건
+
+| | 값 |
+|---|---|
+| 받은 커밋 | `7a99a0f` (2026-09-20 11:48 KST) "update: state/last-run.json". codeload tarball 과 `git clone` 트리 동일(diff -r 차이 0). 총 102커밋 |
+| 실 데이터 | **업로드 없음 — fixtures 만 사용.** fixtures = 사용자 실제 다운로드본(2026-01-01~08-31, 441건, 공급자 51곳). 최종일이 오늘(09-27)로부터 27일 전 → 점검표 판정표 "전월까지만" → 당월(9월) 열 생성·9월분 기한(10/10) 임박 판정 2건만 **[추론]**. 그 밖은 실측 |
+| 실행한 `--as-of` | 없음(오늘 2026-09-27) / `--strict --no-state` / `2026-01-05` / `2026-02-05`(신규, check_grace 2월 경로) / 파괴 실험용 `2026-09-06` |
+| 파일 행수 | SKILL.md 420 · install/SKILL.md 55 · README.md 64 · sync.py 126 · check-config.json 113 · vendors.json 191(30곳) · column-mapping.md 103 · excel-format.md 75 · judgment-rules.md 140 · common.py 374 · check_input.py 273 · build_report.py 666 · validate.py 809 · push.py 426 · last-run.json 25 · test_edge_cases.py 673(t_ 25개 · 개별 체크 106) · checklist.md 281 · last-audit.md 804(직전) · .gitignore 9 |
+| ls 대조 | 점검표 "대상 파일 전체" 목록 + `audit/checklist.md` + `.gitignore` = 실물 27파일. push GROUPS 24 + 저장소 25(= 24 + `.gitignore`) → 누락 0 · 유령 0 |
+| md5 | 설치본 `c732414e88931f0ec219b51e292e5d15` ↔ `install/SKILL.md` `6f686b5721644381382be801a939c92d` — diff 는 끝 개행 1자만. 설치본에 절차·옵션·등급명 grep 0건 ✓ · 저장소 SKILL.md `a68c2449…` · state `46f8542a…`(원격과 동일, 매 실행 뒤 복구 확인) · vendors `3f68fea6…` · config `cacd9692…` |
+| 컨테이너 | 옛 잔존물 없음(`/home/claude` 빈 상태에서 시작). 실험은 전부 `/home/claude/exp_*` 사본, 산출물은 `/home/claude/out7/<실행이름>/` |
+| 부작용 | 저장소 폴더 SKILL.md·scripts·references·config·vendors·fixtures 무변경. 이번 push 는 `audit/last-audit.md` 1파일 |
+
+## 1. 기준선 표 (현재 코드 그대로, 실험보다 먼저)
+
+명령은 전부 `cd /home/claude/hometax` 에서. state 는 첫 실행 전 `/home/claude/base7/last-run.backup.json` 으로 백업, 매 실행 뒤 복구(md5 `46f8542a…` 동일 확인).
+
+| 실행 이름 | 명령 | 벽시계(초) | 도구 호출 | 즉석 코드 줄 | check_input | build_report | validate |
+|---|---|---|---|---|---|---|---|
+| base_today | `check_input.py tests/fixtures` → `build_report.py --uploads tests/fixtures --out out7/base_today` → `validate.py <xlsx> --uploads tests/fixtures` | 0.47 / 1.52 / 1.10 = **3.10** | 3 | 0 | FAIL 0 · WARN 0 · 441건 · 51곳 · 체크섬 30/30 · 사업자번호 변경 처리 완료 1 | 확인 필요 **9** · 기한 전 0 · 단발 3 · 정상 6 · 거래 종료 4 · 해결 0 · 상계 6쌍 · 매출분 제외 0 · 기간 밖 0 · 점검대상 30 / 대상외 21 · 기한 임박 문구 **없음**(8월분 기한 9/10 경과, 9월은 당월) · 추가 권장 0 | FAIL 0 · SKIP 1(해결 집계) · PASS 17 |
+| strict_nostate | 위 + `--strict --no-state` (validate 에도 `--strict`) | 0.46 / 1.51 / 1.12 = 3.10 | 3 | 0 | 동일 | **동일**(9·0·3·6) — 8월 기한 경과라 auto 와 strict 가 같은 시점 | FAIL 0 · SKIP 3(이력·해결·유예) · PASS 15 |
+| asof_0105 | `--as-of 2026-01-05` 3곳 모두 | 0.47 / 0.87 / 0.89 = 2.22 | 3 | 0 | **FAIL 1**(전년 12월 데이터가 통째로 없음 — fixtures 한계) · WARN 1(기간 밖 7개월) | 대상 월 전년 12월~1월 · 5건 · 확인 필요 0 · 해결 **3**(state 가 미래 9/20 이라 직전 3곳이 해결로) · 임박 "전년 12월분 기한 2026-01-10 (D-5) · 27곳" | FAIL 0 · SKIP 2(전액취소·상계) · PASS 16 · 유예 검사 `색 29칸` PASS |
+| asof_0205 | `--as-of 2026-02-05` 3곳 모두 | 0.46 / 0.98 / 0.91 = 2.35 | 3 | 0 | FAIL 0 · WARN 1(기간 밖 6개월) | 대상 월 1월~2월 · 69건 · 확인 필요 0 · 기한 전 **0** · 해결 3 · 임박 "1월분 기한 2026-02-10 (D-5) · 3곳" | **FAIL 1(발급기한 유예)** · SKIP 1 · PASS 16 — 결함 #1 |
+| tests | `tests/test_edge_cases.py` | 49.9 | 1 | 0 | — | — | 25 t_ · 개별 체크 106 · 실패 0 · exit 0 · state 불변 |
+
+결과 집합(미수취목록 `(공급자번호, 결번월, 등급, 상태)` 튜플 집합 22개 + 매트릭스 월별 합 + validate 요약 + state 순서 + xlsx md5)은 `/home/claude/base7/baseline7.json` (컨테이너 한정). 핵심만 옮겨 적는다:
+
+- base_today 확인 필요 9: 광개토(5·7·8월, 계속) · 세종네트웍스(8월, 신규) · 예스코(8월, 신규) · 세무법인 신아(8월, 신규) · 바로고(8월, 신규) · 성우축산(8월, 신규) · 신앙촌상회(8월, 신규) · 비앤지(2월, 계속) · 다연유통(2·4월, 계속). 단발 3: 서바이빙·플리드·인투 란. 정상 6: 세스코·보문하우스·케이티·청호나이스·한전·제이푸드(신). 거래 종료 4: 제이푸드(구)·디패스·코원·팩프렌즈
+- 매트릭스 월별 합(원): 1월 53,992,788 · 2월 70,700,362 · 3월 47,403,992 · 4월 49,796,017 · 5월 44,242,599 · 6월 52,723,343 · 7월 101,251,737 · 8월 63,848,349 · 9월 0 (총 483,959,187 = 원본 합 일치)
+- 9/27 state 순서(9곳): 광개토 · 세종 · 예스코 · 신아 · 바로고 · 성우 · 신앙촌 · 비앤지 · 다연 = **최종수취일 오름차순** (P6 참조)
+- 산출물 직접 확인: 시트 4개 · 매트릭스 헤더 5행(4행 신고기 밴드 1기×6/2기×3) · 1~9월 9열 · 9월 열 전 칸 유예 색 · A1 `(2026-01-01 ~ 2026-09-27)` · 1월 산출물 A1 `(2025-12-01 ~ 2026-01-05)` 헤더 `전년 12월 / 1월` 밴드 `2기 / 1기` ✓ (6차 #20 해결 유지)
+
+### 실사용 1회(SKILL.md 1~7단계)의 도구 호출·즉석 코드 [실측 + 추론]
+
+| 단계 | 현재(A) 도구 호출 | 즉석 코드 | 근거 |
+|---|---|---|---|
+| 1 저장소 받기 + 설명서·기준선 읽기 | bash 1 + view **7~8** | 0 | [실측] SKILL.md 23,099자(view 16,000자 절단 → 2회) · last-audit.md 83,115자(→ 5~6회). 부트스트랩 36-43행 "함께 읽는다" |
+| 2 업로드 확인 | view 1 | 0 | |
+| 3·4·5 검증·생성·검증 | bash 3 | 0 | 파일명은 build_report 의 `저장:` 줄에서 |
+| 6 결과 전달(확인 필요 표) | bash 1 + present_files 1 | **11** | [실측] 콘솔에는 건수만 있고 행(상호·결번월·상태·최종수취일)이 없어 openpyxl 로 미수취목록을 읽어야 한다(아래 S1 의 A 스니펫 11줄) |
+| 7 저장소 반영 | bash 1~2 (dry-run 관행 시 2) | 0 | |
+| **합계** | **15~17** | **11** | |
+
+## 직전 기준선 판정 (34건)
+
+### "다음 점검에서 대조할 것" 0~8
+
+| # | 판정 | 근거(지금 원문) |
+|---|---|---|
+| 0 업로드 최종일 먼저 | **준수** | 업로드 없음 → fixtures 사용, 최종일 08-31(27일 전)로 판정. md5 근거로 "실 데이터 아님" 이라 쓰지 않음 |
+| 1 개정안 1~11 채택분 반영 + 버전 줄 | **미해결(기록 정정 후보)** | `checklist.md` 3 `버전: 6차 정기점검 · 2026-09-07` 인데 10 `**반영 상태**: 6차 개정안 12건 중 **2·9·10·11·12번 반영 완료**` (v6.1 취지). 또 1번(`--as-of` 연도)은 175 `실측할 것: \`--as-of <데이터 연도>-01-05\` (현재 자료 기준 2026-01-05)` 로 **이미 반영돼 있는데** 11행은 "1·3~8번 … 아직 반영하지 않았다" → 기록 오류. 3~8 은 미반영 맞음 |
+| 2 #5 #20 (1월) | **해결됨** [실측] | `validate.py` 536-538 `ms = month_range(as_of)` / `py, pm = ms[-2] …` / `expect = is_in_grace(py, pm, as_of, cfg)` · `build_report.py` 356-357 `_y0, _m0 = months[0]` / `ws["A1"] = f"… ({_y0}-{_m0:02d}-01 ~ {as_of})"` — 1월 산출물 A1 `2025-12-01 ~ 2026-01-05`, 유예 색 55칸 제거 시 FAIL(파괴 실험 표) |
+| 3 커플링 개선안1 ↔ #14 #15 N4 | **해결됨** [실측] | `validate.py` 697-731 (b-5)(b-6)(b-7) 존재 · `excel-format.md` 15-18 `\| 1 \| \`sheets.matrix\` \|` · `column-mapping.md` 5 `**코드가 읽는 값의 출처는 \`config/check-config.json\` 의 \`input\` 블록 하나다.**` · `judgment-rules.md` 46 `익월의 \`grace.deadline_day\`` — 단일 출처 검사 PASS(스크립트 5 · 문서 6) |
+| 4 커플링 #29 가안 + 개선안 4 | **해결됨** [실측] | `build_report.py` 132-133 `if f["ended"]:` / `continue` · 161-164 C 루프 `if f["ended"]: rows.append(_row("C. 거래 종료", …` · `check-config.json` `"ignore_suppliers": ["2120459010"]` · `push.py` 329-337 `--add-vendor / --ignore-vendor / --cycle`. 9/27 콘솔·시트에 유성빌딩 추가 권장 없음(추가 권장 0곳) |
+| 5 check_resolved 실사용 대조 | **미실측(이월 4회차째)** | fixtures 9/27 해결 0 → `[SKIP] 해결 집계`. 1월·2월 재현에서 해결 3 은 **등급열 3 · 상태열만 0** 경로. `상태열만 N>0` 은 `t_resolved_status` 의 sandbox 에서만 밟힘 |
+| 6 #18 #28 방향 | **해결됨** [실측] | #18: `check_input.py` 160 `if until_passed(v.get("until"), as_of):   # build_report 와 같은 기준(common)` · #28 다안: `SKILL.md` 321 `### \`비정기\` 라벨의 범위 — 등급이 안 바뀌어도 정상이다`, `judgment-rules.md` 88 `### cycle 라벨은 A 경로를 면제하지 않는다` |
+| 7 checklist.md push·check_paths | **해결됨** [실측] | 첫 ls 에 `audit/checklist.md` 존재 · `validate.py` 597 `"audit/last-audit.md", "audit/checklist.md",` · 9/27 `[PASS] 경로 존재 확인 17개 전부 존재` |
+| 8 1차 패스 잔존물 | **해결됨** [실측] | `/home/claude` 에 hometax_old_session · audit_new_head.md · kill.py 없음(빈 홈에서 시작) |
+
+### 6차 후속 4차 "다음 회차에 볼 것" 4건
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| until_passed 단일 기준 | **해결됨** [실측] | `grep -n "until" scripts/*.py` 에서 until 을 날짜로 비교하는 곳은 `common.py` 164 `return (y, m) < (as_of.year, as_of.month)` **한 곳**. `build_report.py` 67 `_m(v.get("until"), y, 12)` 는 scope 월 환산(통과 여부 판정 아님), `check_input.py` 254 `vmap.get(i, {}).get("until")` 은 값 유무만 |
+| `f["ended"]` 문자열 잔존 | **해결됨** [실측] | `grep -n "ended"` → `build_report.py` 109 `"ended": until_passed(v.get("until"), as_of),` · 132 `if f["ended"]:` · 161 `if f["ended"]:` 뿐. 문자열 사용 0. C 행 메모는 163 `until={f['until']}` |
+| (b-5) `ws.title =` 미검출 | **미해결 → 결함 #4** [실측] | `build_report.py` 351 을 `ws.title = "매트릭스"` 로 바꾼 사본: `[PASS] 임계값·색상 단일 출처`. 대조: `validate.py` 의 `wb[cfg["sheets"]["matrix"]]` 를 `wb["매트릭스"]` 로 바꾸면 `[FAIL] 단일 출처 위반 1곳` |
+| check_grace 2월 경로 | **결함 #1** [실측] | `--as-of 2026-02-05` 정상 산출물에 `[FAIL] 발급기한 유예 — 2026-01분 기한(10일)이 안 지났는데 '기한 전' 판정이 0건이다(매트릭스 유예 색 3칸)` |
+
+### 6차 후속 3차 "다음 회차에 볼 것" 2건
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| `--dry-run` 읽기 전용 테스트 | **미해결 → 개선안 2** | `tests/test_edge_cases.py` 에 `dry` · `md5` · `readonly` grep 0건. 동작 자체는 실측 정상(P5) |
+| 조치 표 문장 ↔ 코드 대조를 점검표에 | **미해결 → 개정안 9** | `checklist.md` 에 해당 문구 없음. 이번 회차에 실제로 SKILL.md 243 · push.py 283 의 "자료에서 채워진다" 가 코드와 어긋난 채 두 회차를 넘어왔다(결함 #2) |
+
+### 6차 결함 14건 + 개선안 5건 — 전부 해결됨 유지 [실측]
+
+| # | 근거(지금 원문) |
+|---|---|
+| 5 | 위 0~8 의 2번 |
+| 28 | 위 6번 (다안 = 코드 무변경 + 문서) |
+| 29 | 위 4번 |
+| 20 | 위 2번 |
+| 30 | `build_report.py` 292-293 `if listed_ids is not None and bid not in listed_ids:` / `continue` · `validate.py` 401 `if sid not in listed and g != "해결":` |
+| N4 | `judgment-rules.md` 46 |
+| 16 | `validate.py` 28 `from build_report import GRADE_ORDER` · 381 `order = GRADE_ORDER` |
+| 14 | `excel-format.md` 15-18 config 키 표 |
+| 15 | `column-mapping.md` 5-14 |
+| 27 | `SKILL.md` 257 `### 가드가 걸렸을 때 밟는 3단계` · `push.py` 379-382 `거래처를 의도적으로 뺐다면 … 전부 설명되면 --force 가 정당합니다` |
+| 21 | `build_report.py` 359-361 `"빈칸=미수취 · 색칠된 0=발행 후 전액취소 · 옅게 칠한 칸=발급기한 전 " "(색은 config/check-config.json 의 colors)"` |
+| N6 | `validate.py` 43-46 `SHEET_CHECKS = [...]`(14개) · 787-791 개별 SKIP. 시트명 변경 사본: `FAIL 1 · SKIP 14 · PASS 3` = 18 |
+| 18 | 위 6번 |
+| 19 | `check_input.py` 268-269 `변경이라면 구 번호에 until, 신 번호에 since 를 넣어 둘 다 남긴다.` · 9/27 `[OK  ] 사업자번호 변경 처리 완료 1건 제이푸드` |
+| 개선안 1·2·3·5 | (b-5~7) 존재 · `check_paths` 17개 · `build_report.py` 578-584 `[중단] 기간 안 자료 0건` · `t_no_upload_files` `t_zero_rows_not_resolved` 존재 |
+| 개선안 4 | `push.py` 329 `--add-vendor` (dry-run 실측 P5) |
+
+### 운영 주의(5차·6차)
+
+| 항목 | 판정 |
+|---|---|
+| 유성빌딩 재권유 금지 | 종결. `ignore_suppliers` 로 콘솔·시트 모두 안 뜸(대상외 시트 유성빌딩 행 추가 권장 칸 None, 콘솔 "추가 권장" 줄 없음) |
+
+---
+
+## 결함 (10건 — 신규 8 · 이월 메모 승격 2)
+
+심각도 순. 작업경로는 전부 `push.py --code`(브랜치). 월 의존 재평가: 오늘 9월. **#1 은 2027-02 회차에 확정 재현**되므로 12월 회차 전까지 1순위.
+
+| # | 심각도 | 파일 | 줄 | 문제 원문(그대로) | 실측/추론 | 왜 틀렸는지 | 수정 방향 | 작업경로 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | **높음** | `scripts/validate.py` | 572-576 | `elif expect and not january and n == 0:` / `rec(FAIL, "발급기한 유예", f"{label}분 기한({cfg['grace']['deadline_day']}일)이 안 지났는데 " f"'기한 전' 판정이 0건이다(매트릭스 유예 색 {grace_cells}칸). "` | [실측] `--as-of 2026-02-05` | 2월은 점검 창이 1~2월뿐이라 C 경로(경과 `stale_days` 이상 **그리고** 유예 월 보유)에 들어올 거래처가 구조적으로 없다 — 1월을 못 받은 곳은 유효 건 0(`elapsed None`)이라 C 진입 불가, 1월을 받은 곳은 유예 월이 없다. 그래서 '기한 전' 0 이 **정상**인데 6차 후속 4차 #2 가 비(非)1월에 등급 건수 신호를 택해 정상 산출물에 FAIL. 2027-02 초 실사용에서 "FAIL 이면 산출물을 주지 않는다"(SKILL.md 145) 로 막힌다. 3월 이후도 데이터에 따라 0 이 될 수 있다 | 신호를 월로 고르지 말고 **기대값을 재산출**: validate 가 이미 df·vendors 를 갖고 있으니 `build_facts`+`grade_all` 로 '기한 전' 기대 건수를 구해 실제 건수와 **정확 일치** 비교(0=0 이면 PASS). 색 칸 교차 신호는 보조로 유지. 개선안 1 과 같은 회차 | `push.py --code` |
+| 2 | **중간** | `SKILL.md` / `scripts/push.py` / `scripts/build_report.py` | 243 / 283-284 · 331 / 100 | SKILL 243 `- \`--add-vendor\` 는 \`name\` 을 비워 둔다. 리포트를 다시 만들면 자료에서 채워진다.` · push 283 `"\n  상호(name)는 비어 있습니다. 리포트를 다시 만들면 자료에서 채워지며,\n"` · push 331 `"이름·주기는 최신 산출물의 대상외 목록에서 가져온다. "` · build_report 100 `"biz_no": sid, "name": v["name"], "cycle": v.get("cycle", ""),` | [실측] vendors 에 `name: ""` 로 212-04-59010 추가 후 실행 → 매트릭스 `['212-04-59010', None, '매월', …]` · 미수취목록 `['A. 발행 후 전액취소', '확인 필요', '212-04-59010', None, …]` | 채워주는 코드가 없다. `--add-vendor` 로 넣은 거래처는 리포트·state·채팅 요약에 상호가 빈칸으로 나간다. 문서(SKILL·push 콘솔·argparse help)만 세 곳이 같은 거짓을 말한다(6차 후속 2차 기록도 동일) | (a) `_one()` 에서 `v["name"] or (str(g["상호"].iloc[-1]) if len(g) else "")` 로 자료에서 채움 + `--add-vendor` 가 최신 산출물 없이도 동작하므로 push 331 문구는 삭제, 또는 (b) 세 문구를 "상호는 vendors.json 에 직접 적는다" 로 정정. (a) 권장 | `push.py --code` |
+| 3 | **중간** | `scripts/push.py` | 260-270 | `sid = re.sub(r"\D", "", raw)` / `if len(sid) != 10:` / `print(f"  건너뜀  {raw} — 사업자번호가 10자리가 아닙니다")` … `d["vendors"].append({"biz_no": sid, "name": "",` | [실측] `--add-vendor 999-99-99999` → `추가    999-99-99999` 후 vendors.json 에 기록(31곳). 이어 `check_input` → `[FAIL] vendors.json 사업자번호 체크섬 오류 1건` | 체크섬(`common.biz_checksum_ok`)을 안 본다. 오타 번호가 그대로 push 되고(`vendors` 묶음은 테스트 게이트 없음), 다음 실행이 check_input FAIL 로 통째로 막힌다. SKILL.md 306 "체크섬은 check_input.py 가 검증" 은 사후 검증뿐 | 등록 전 `biz_checksum_ok(sid)` 로 거르고 `건너뜀 … 체크섬 오류` 출력 | `push.py --code` |
+| 4 | **중간** (범위 밖 미검출) | `scripts/validate.py` | 705-708 | `for name, src in py.items():` / `if re.search(rf'\[\s*["\']{v}["\']\s*\]', src) or \` / `re.search(rf'create_sheet\(\s*["\']{v}["\']', src):` | [실측] P3 | `build_report.py` 351 `ws.title = cfg["sheets"]["matrix"]` 를 리터럴로 바꿔도 PASS. 첫 시트만 `ws.title =` 로 이름을 주므로 매트릭스 시트명 하드코딩은 영영 못 잡는다(6차 후속 4차 메모 이월) | 패턴에 `re.search(rf'\.title\s*=\s*["\']{v}["\']', src)` 추가. 파괴 실험 표에 "ws.title 리터럴" 행 상시화 | `push.py --code` |
+| 5 | 낮음 | `references/judgment-rules.md` / `SKILL.md` | 86 / 169 | judgment 86 `\| 거래 종료 \| vendors 에 \`until\` 등록됨 \| 점검 대상 아님 \|` · SKILL 169 `\| \`거래 종료\` \| \`vendors.json\` 에 \`until\` 로 등록됨 — 점검 대상 아님 \| 무시. …` | [추론] 코드 원문 기준(`build_report.py` 109 `"ended": until_passed(v.get("until"), as_of)` · 132 · 161). 6차 후속 4차가 미래 until(비앤지 2026-12) → `확인 필요` 유지를 실측함 | 6차 후속 4차 이후 코드는 **until 이 지난 곳만** 거래 종료다. 미래 until 은 결번 판정을 그대로 받는다. 문서 두 곳은 옛 기준("등록되면 종료")을 말한다 — 6차 후속 4차가 코드·테스트만 고치고 문서를 안 고쳤다(0단계 (2) 유형) | "until 이 **지난** 곳(실행월 이전). 미래 until 은 아직 거래 중으로 판정" 으로 두 곳 정정 | `push.py --code` |
+| 6 | 낮음 | `scripts/validate.py` | 114-116 · 157-159 · 405 · 424 | 114 `r, m = find_header_row(ws, ["공급자번호", "상호"])` / 115 `if not r:` / 116 `return` (check_matrix_blank_and_fill) · 157-159 동일(check_vendor_coverage) · 405 `if g == "확인 필요" and mrow.get(sid):` · 424 `rec(PASS, "등급 분류", f"{n}행 · 등급값·정렬·결번 표기 정상")` | [실측] 매트릭스 헤더 `공급자번호`→`공급자 번호` 사본: 요약 **15개**(`FAIL 3 · SKIP 1 · PASS 11`). `매트릭스 월 컬럼`·`미수취=공란 검사`·`전액취소=0+노랑 검사`·`점검 대상 누락 검사` 4건이 기록 없이 사라지고, `등급 분류` 는 `mrow={}` 라 결번 대조를 한 건도 안 하고도 `22행 · 등급값·정렬·결번 표기 정상` PASS | 6차 후속 4차 5a 가 "요약 개수는 늘 18" 을 원칙으로 세웠는데(788-789 주석) 헤더 미검출 경로는 그 원칙 밖이다. 전체는 FAIL 이라 조용한 통과는 아니지만 "검사가 사라졌다" 와 구분이 안 되고, 등급 분류 PASS 문구는 거짓 | `if not r:` 에서 `rec(SKIP, <검사명>, "매트릭스 헤더 미검출")` 로 개별 기록 · 등급 분류는 `mrow` 가 비면 "결번 표기 미확인" 으로 문구 분리(또는 SKIP) | `push.py --code` |
+| 7 | 낮음 | `scripts/push.py` | 291-300 | `for raw in a.ignore_vendor:` / `sid = re.sub(r"\D", "", raw)` / `if len(sid) != 10:` … `if sid in cur:` / `print(f"  건너뜀 … 이미 제외 목록에 있습니다")` / `cur.append(sid)` | [실측] `--ignore-vendor 869-35-00721 --dry-run`(다연유통, vendors.json 에 **등록된** 곳) → `제외 예정  869-35-00721 — '추가 권장' 재권유를 끕니다` | vendors.json 에 남아 있는 거래처는 `ignore_suppliers` 에 넣어도 판정에 아무 영향이 없다(대상외 시트·`_print_reco` 두 곳만 읽음, 6차 후속 3차 D). help 333-335 "의도적으로 점검 대상에서 뺀 거래처용" 과 어긋난 입력을 그대로 받아 사용자는 뺐다고 믿게 된다 | vendors.json 에 있으면 `건너뜀 … 아직 vendors.json 에 등록돼 있습니다. 먼저 지우세요` | `push.py --code` |
+| 8 | 낮음 | `scripts/push.py` | 332 | `"--ignore 와 같이 쓸 수 없다.")` | [실측] `--help` 원문 | 옵션 이름은 `--ignore-vendor`(333) | 문구 정정 | `push.py --code` |
+| 9 | 낮음 | `SKILL.md` | 418 | `audit/last-audit.md        직전 점검 기준선 (1단계에서 함께 읽는다)` (구성 목록에 `audit/checklist.md` 없음) | [실측] 실물 ls 에 `audit/checklist.md` 존재(6차부터) | "저장소 구성" 목록이 실물과 다르다(점검표 A "파일 구성 목록 일치") | `audit/checklist.md   정기 점검표 정본` 한 줄 추가 | `push.py --code` |
+| 10 | 낮음 | `scripts/check_input.py` | 252 | `vmap = {v["biz_no"]: v for v in vendors}` | [실측] 제이푸드 구 번호를 `"559-96-01523"`(하이픈) 로 바꾼 사본: `[OK  ] … 체크섬 정상` 인데 `[WARN] 같은 상호인데 사업자번호가 다름` 이 재발("처리 완료" 사라짐) | 같은 파일의 체크섬·중복 검사(227·237)와 `build_facts` 46 은 `norm_biz` 로 정규화하는데 이 한 곳만 원문 키를 써서, 표기가 섞이면 이미 처리한 쌍을 다시 경고한다. `push.py` 258 `have = {v["biz_no"] …}` 도 같은 유형(하이픈 등록분은 "이미 등록" 을 못 잡아 중복 추가 가능). 형식 규칙(하이픈 없음)을 지키면 안 밟는다 | 두 곳 `norm_biz(v["biz_no"])` | `push.py --code` |
+
+### 통과 처리 (인용은 되나 결함으로 올리지 않음) — 5건
+
+- `build_report.py` 8 `3. 발급기한(익월 10일)이 안 지난 달은 미수취로 확정하지 않는다.` · `check_input.py` 124 `기한이 익년 1/10 이라` · `common.py` 82 `12월분 발급기한은 익년 1/10 이라` — 독스트링 사본 3곳, validate 620-627 가 일부러 제외(6차와 동일). #2·#5 문구를 고칠 때 같이 고치면 싸다
+- `validate.check_matrix_blank_and_fill` 130 `if c.value is None:` — `''` 조건은 openpyxl 저장 시 None 환원으로 만들 수 없음(4회차 연속). `' '` 는 `월별 합 대사` 가 `[FAIL] … 숫자가 아닌 값 1개: 1월: ' '` 로 잡음(6차 5b 유지)
+- `check_input.py` 132 `if day > 10:` — deadline_day 와 무관한 시작일 휴리스틱(5·6차 판정 유지)
+- `sync.py` 72 `--with-tests` SUPPRESS no-op 호환 플래그(6차 판정 유지)
+- `validate.check_grace` 는 9/27 처럼 직전 달 기한이 지난 뒤(`expect=False`)에는 등급열을 어떻게 훼손해도 PASS — 설계상 비활성 구간이지 죽은 검사가 아님. 9/6 산출물(기한 전→정상)과 1월 산출물(색 제거)로 FAIL 확인. 다만 개선안 1 로 가면 이 구간도 검사된다
+
+**인용불가로 제외: 0건.**
+
+---
+
+## 개선안 (최대 5)
+
+| # | 내용 | 이유 | 우선순위 |
+|---|---|---|---|
+| 1 | validate 에 **등급 재산출 대조** 신설: `build_facts`+`grade_all` 로 기대 `(공급자번호, 등급, 결번월)` 집합을 만들어 미수취목록과 정확 일치 비교(누락→FAIL, 초과→FAIL). `check_grace` 의 등급 건수 신호를 이 기대값으로 교체 | 점검표 E "등급 분류가 옳은지" 가 아직 형태 검사(값·정렬·결번 공란)뿐이다. 결함 #1 의 근본 해법이고, 6차 후속 4차 #2 가 "or/and" 로 고민하던 신호 선택 문제가 사라진다. 리스크: build_report 와 같은 함수를 쓰므로 판정 논리 자체의 오류는 못 잡는다(그건 tests 의 몫) — 기록해 둘 것 | **1** |
+| 2 | `t_dry_run_readonly`: sandbox 에서 `push.py X --add-vendor … --dry-run` · `--ignore-vendor … --dry-run` 실행 전후 `config/` md5 동일 단언 (6차 후속 3차 이월) | 6차 후속 3차 A 사고(dry-run 이 파일을 씀)의 재발을 손 대조에만 맡기고 있다. 이번 회차도 손으로 27파일 md5 대조(P5) | 2 |
+| 3 | `save_state` 의 `flagged` 를 `biz_no` 로 정렬(`build_report.py` 312-314) | 지금은 `grade_all` 정렬(등급→최종수취일)을 따라 최종수취일이 바뀔 때마다 순서가 바뀌어 9/20 처럼 내용 동일·순서만 다른 커밋(+7/−7)이 생긴다. `check_state`·`state_regressed` 는 집합·건수 비교라 판정 영향 0(P6 실측) — 결함 아님 | 3 |
+| 4 | `build_report` 가 `state.run_date > as_of` 이면 경고(또는 `--as-of` 과거 재현 시 이력 비교 자동 off) | 이번 회차 1월·2월 재현에서 9/20 이력이 미래라 직전 확인 필요 3곳이 전부 `해결` 로 표기됐다(콘솔 `해결 3`). 과거 재현이면 "해결" 이 아니라 "이력이 미래" 다. push 가드가 state 역행은 막지만 리포트의 거짓 해결 표기는 못 막는다 | 4 |
+| 5 | validate FAIL 이면 산출물 파일명에 `_FAIL` 접미를 붙이거나 `--out` 에서 지운다(옵션) | SKILL.md 145 "FAIL 이 있으면 산출물을 주지 않는다" 가 사람 절차에만 의존한다. 2월 회차 오탐(#1) 같은 때 판단은 사용자가 하되, 정상 파일명으로 `/mnt/user-data/outputs` 에 남아 present_files 되는 사고를 막는다 | 5 |
+
+---
+
+## 속도·효율 후보 S1~S5
+
+합격 기준: 같은 입력으로 A(현재)/B(후보) 각 1회, 결과 집합(튜플 22 + 월별 합 + validate 요약 + state 순서) 동일 + validate FAIL 0. 실험은 `/home/claude/exp_speed` 사본, 저장소·설치본 불변. 파이프라인 벽시계는 A 3.10s / B 3.07s 로 같다 — 절감 대상은 **도구 호출 수·즉석 코드 줄 수**다.
+
+| # | 후보 | (a) 현재 원문 | (b) 실측 | (c) 절감 | (d) 리스크·검증 | 판정 |
+|---|---|---|---|---|---|---|
+| S1 | `build_report` 콘솔에 **확인 필요 행**(공급자번호·상호·결번월·상태·최종수취일·유형)을 찍는다 | SKILL.md 151 `채팅에는 **확인 필요 항목만** 표로 요약한다.` — 콘솔 627-628 은 건수뿐 | A: openpyxl 스니펫 **11줄** + bash 1회 → B: 0줄·0회. 결과 집합 **동일**(튜플 22/22 · 월별 합 · `FAIL 0 · SKIP 1 · PASS 17` · state 순서) | 도구 호출 −1 · 즉석 코드 −11줄 | 콘솔 출력만 추가, xlsx·state 무변경. 검증: `tests` 에 콘솔 `!` 줄 수 == 확인 필요 건수 단언 추가 | **합격** |
+| S2 | SKILL.md 3~5단계를 `&&` **한 줄**로: `python3 scripts/check_input.py $U && python3 scripts/build_report.py --uploads $U --out $O && python3 scripts/validate.py "$(ls -t $O/*.xlsx \| head -1)" --uploads $U` (`--as-of`·`--strict` 는 세 곳에 같이) | SKILL.md 95-98 · 114-116 · 133-135 세 코드 블록, 134 `<생성된파일>.xlsx` | B 1회 실행 3.07s, 결과 집합 동일. check_input FAIL 이면 `&&` 가 멈춰 "FAIL 이면 만들지 말 것"(104) 이 그대로 지켜진다(1월 재현에서 rc=1 확인) | 도구 호출 −2 | `ls -t` 최신 파일이 이번 산출물이라는 가정 — `--out` 이 실행별 폴더면 안전. 코드 변경 0(문서만) | **합격** |
+| S3 | 실사용 회차의 문서 읽기 축소: `audit/last-audit.md`(83,115자, view 5~6회) 대신 **`audit/OPEN.md`(≤30줄: 미해결·첫 실사용에서 볼 것)** 만 읽고, last-audit.md 는 "결과가 이상하거나 고칠 때" 로 한정 | install/SKILL.md 36-43 `/home/claude/hometax/audit/last-audit.md   ← 있으면 함께 읽는다` · SKILL.md 73 `\`audit/last-audit.md\` 가 있으면 **함께 읽는다.**` | 문자 수만 실측(view 절단 16,000자). 회차마다 파일이 커진다(6차 387→804행→이번 ~1,100행) | 도구 호출 약 −5 | 결과 무관. **설계·문서 변경이라 사용자 결정, 기본 미채택.** 채택 시 OPEN.md 갱신 의무를 마무리 절에 넣어야 함(두 곳 유지 비용) | 사용자 결정 |
+| S4 | 정상 회차(state 만 올림)의 `push.py --dry-run` 선행 관행 생략 | SKILL.md 217 `python3 scripts/push.py <토큰> --code --dry-run # 뭐가 바뀌는지 먼저 확인` · 223 `확신이 없으면 먼저 이걸로 본다` | push.py 394-397 이 올리기 전 바뀐 파일·줄 수를 찍고, state 역행 가드가 있다 [추론 — 이번 회차는 code 묶음이라 dry-run 을 썼다] | 도구 호출 −1 | 되돌릴 수 없는 커밋이라 **사용자 결정, 기본 미채택**. code 묶음은 dry-run 유지 | 사용자 결정 |
+| S5 | 스크립트 벽시계 | 세 스크립트가 각각 6개 xls 를 파싱(≈0.45s×3) | 합계 3.10s 중 파싱 중복 ≈0.9s | <2s | 지시 기준("합쳐 2초 미만이면 후보 아님")에 해당 없음 | 후보 아님(기록만) |
+
+### 실험 코드 원문
+
+S1 (사본 `exp_speed/scripts/build_report.py`, `_print_deadline(facts, as_of, cfg)` 호출 직전에 4줄):
+
+```python
+    for r in rows:      # S1: 확인 필요 행을 콘솔에도 — 채팅 요약용 즉석 openpyxl 코드를 없앤다
+        if r["grade"] == "확인 필요":
+            print(f"  ! {fmt_biz(r['biz_no'])} {r['name']} · 결번 {_labels(r['gap'], as_of) or '-'}"
+                  f" · {r.get('status', '')} · 최종수취 {r['last']} · {r['kind']}")
+```
+
+B 출력(9곳): `! 264-81-35761 농업회사법인 광개토엠앤에프 주식회사 · 결번 5월, 7월, 8월 · 계속 · 최종수취 2026-06-30 · A. 정기 거래처 결번` … `! 869-35-00721 다연유통 · 결번 2월, 4월 · 계속 · 최종수취 2026-08-31 · A. 정기 거래처 결번`
+
+S2 (B 실행에 쓴 한 줄, `U=tests/fixtures O=/home/claude/out7/B_speed`):
+
+```bash
+python3 scripts/check_input.py $U && python3 scripts/build_report.py --uploads $U --out $O && python3 scripts/validate.py "$(ls -t $O/*.xlsx | head -1)" --uploads $U
+```
+
+A 스니펫(현재 6단계에 필요한 즉석 코드, 11줄): `load_config()` → `load_workbook(<xlsx>)[cfg["sheets"]["missing"]]` → 헤더 행 탐색 → `{이름: 열}` → 등급 `확인 필요` 행의 상호·누락된 월·상태·최종수취일 출력.
+
+---
+
+## 정확성 P1~P9 결과
+
+| # | 결과 | 근거 |
+|---|---|---|
+| P1 | until 날짜 비교 **1곳**(`common.py` 164) | 위 후속 4차 표 |
+| P2 | `f["ended"]` 문자열 사용 **0** | 〃 |
+| P3 | `ws.title` 리터럴 → **PASS(범위 밖 미검출)** → 결함 #4 | 〃 |
+| P4 | 2월 `check_grace` → **FAIL**(정상 산출물) → 결함 #1. SKIP 은 없음 | 기준선 표 asof_0205 |
+| P5 | `--add-vendor 212-04-59010 999-99-99999 1198687135 --dry-run` · `--ignore-vendor 869-35-00721 2120459010 --dry-run` · 둘 다 지정 → 저장소 폴더 **27파일 md5 전부 동일**(읽기 전용 ✓, 둘 다 지정은 `[중단]` rc 0). 테스트는 없음 → 개선안 2. 부수 발견: 체크섬 미검증(#3) · 등록 거래처 수락(#7) | |
+| P6 | state 순서 = `grade_all` 정렬 `(GRADE_ORDER, last)` 즉 **최종수취일 오름차순** — 379행 매트릭스 키 `(not listed, -months_got, name)` 를 따르지 않는다. 9/6 `광개토·비앤지·다연`(fixtures 최종수취 6/30·8/29·8/31) → 9/20 `비앤지·다연·광개토` 는 실자료에서 광개토가 9월분을 받아 최종수취일이 뒤로 간 것. `validate.check_state` 443·457 은 set, `push.state_regressed` 181-192 는 run_date+건수 → 순서 무관(같은 날 순서만 바뀐 케이스 `None` 실측). 결함 아님 → 개선안 3 | |
+| P7 | `--add-vendor`·`--ignore-vendor`·`--cycle` 은 `SKILL.md` 228-230·238-247, `ignore_suppliers` 는 229·249 에 있음. **README.md 0건**(README 는 `--dry-run`·`--only` 등도 없는 축약본) · `checklist.md` A 옵션 목록(126행) 없음 → 개정안 2 | |
+| P8 | **[추론]** 9월 열은 실행월이라 생성되지만(9/27 실측 9열·전 칸 유예 색) 9월분 기한(10/10) 임박 문구는 당월 제외 규칙(`_print_deadline` 640-641)으로 10/1~10/10 실행에서만 나온다. `check_resolved` 상태열만 N>0 실사용 대조는 이번에도 미실측(해결 0) | |
+| P9 | `push.py` 의 `BRANCH` 사용처 **4곳**: 44 `BRANCH = "main"` · 139 `url = f"{API}/{urllib.request.quote(path)}?ref={BRANCH}"` · 149 `"branch": BRANCH}` · 355 `print(f"저장소: {REPO}@{BRANCH}")`. `sync.py` 는 29 `BRANCH = "main"` · 69 `ap.add_argument("--ref", default=f"refs/heads/{BRANCH}",`. `python3 sync.py --ref refs/heads/main /home/claude/synctest` → `24개 파일 · 준비 완료`, 작업본과 `diff -rq` 차이 0 (브랜치 경로로 받아짐) | 설계는 하지 않았다 |
+
+기타 실측: 테스트 게이트 — 사본 `common.py` 에 `range(1, 10)` 주입 후 `push.run_tests()` → `False`(테스트 FAIL 출력). state 역행 가드 — 과거날짜 / 같은날 감소 / 원격 깨짐 → 차단 메시지, 정상 전진·같은날 순서만 변경 → `None`. config 삭제 — `build_report`·`check_input` 모두 `[중단] 설정(check-config.json) 파일이 없습니다` rc 1. GROUPS 커버리지 누락 0. sync codeload(42행) 유지.
+
+---
+
+## validate.py 검사 생존 확인 (고유 검사명 20개 · 파괴 30회)
+
+기준: fixtures 로 9/27 산출물(`FAIL 0 · SKIP 1 · PASS 17`, state = 그 실행이 저장한 9곳) · 9/6 산출물(기한 전 있음) · 1월 산출물(`--as-of 2026-01-05`, state = 9/20 이력 → 해결 3). 사본 `/home/claude/exp_val` 에서 한 곳씩 바꿔 재검증. 실행 스크립트 원문은 아래 부록. 정상 경로 18개 + **실패 경로 전용 2개(매트릭스 헤더 · 매트릭스 셀 검사)** 전부 FAIL 확인. 범위 밖 1건.
+
+| 검사 | 파괴 방법 | 결과 |
+|---|---|---|
+| 경로 존재 확인 | README.md 임시 제거 | FAIL ✓ |
+| config 죽은 키 | `thresholds.zzz_dead: 1` | FAIL ✓ `config 죽은 키 1개` |
+| 임계값·색상 단일 출처 (b-4) | README 끝 `발급기한은 익월 10일이다.` | FAIL ✓ |
+| 〃 (b-1) | excel-format 끝 `FFEB9C` | FAIL ✓ |
+| 〃 (b-7) | README 끝 `1/10` | FAIL ✓ |
+| 〃 (b-5 문서) | judgment-rules 에 `\| 매트릭스 \|` 표 | FAIL ✓ |
+| 〃 (b-3) | common.py `range(1, 10)` | FAIL ✓ |
+| 〃 (b-6) | build_report `th["monthly_min_months"]` → `6` | FAIL ✓ |
+| 〃 (b-5 코드) | build_report `create_sheet("미수취목록")` | FAIL ✓ |
+| 〃 (b-5 코드) | build_report `ws.title = "매트릭스"` | **PASS ✗ — 범위 밖(결함 #4)** |
+| 시트 구성 | 시트명 매트릭스→매트릭수 | FAIL ✓ `FAIL 1 · SKIP 14 · PASS 3` = 18 |
+| 매트릭스 헤더 (실패 전용) | 매트릭스 헤더 `공급자번호`→`공급자 번호` | FAIL ✓ — 요약 **15개**(결함 #6) |
+| 매트릭스 월 컬럼 | 헤더 `9월`→`9 월` | FAIL ✓ |
+| 매트릭스 셀 검사 (실패 전용) | 월 헤더 전부 `1M`… (월 컬럼 0개) | FAIL ✓ `월 컬럼을 하나도 못 찾음` (요약 17개) |
+| 미수취=공란 검사 | 공란 한 칸에 취소색 | FAIL ✓ |
+| 〃 | 공란 한 칸에 `' '` | 이 검사는 PASS, `월별 합 대사` 가 FAIL(설계, 6차 5b) |
+| 전액취소=0+노랑 검사 | 0 칸 노랑 제거 | FAIL ✓ |
+| 점검 대상 누락 검사 | 점검대상 1행 삭제 | FAIL ✓ (합계·월별도 FAIL) |
+| 합계 대사 | 순공급가액 +1 / `' '` | FAIL ✓ / FAIL ✓ `숫자가 아닌 칸 1개` |
+| 월별 합 대사 | 한 행 1월↔5월 교환 | FAIL ✓ `불일치 2개월` |
+| 원본 행수 | 원본정제 마지막 행 삭제 | FAIL ✓ |
+| 승인번호 중복 | 1건 복제 | FAIL ✓ `승인번호 중복 1건` |
+| 상계 매칭 | `취소분(상계)` 1건 → `-` | FAIL ✓ |
+| 대상외공급자 시트 | 공급자번호를 vendors 것(바로고)으로 | FAIL ✓ |
+| 등급 분류 | `이상등급` / 결번월 8월→값 있는 1월 / 첫 행 `정상`(정렬 뒤집힘) | FAIL ✓ 1건 / 1건 / 11건 |
+| 실행 이력 비교 | state flagged 9→1 | FAIL ✓ |
+| 해결 집계 | 1월 산출물 해결 행 상태 비움 | FAIL ✓ |
+| 발급기한 유예 | 9/27: 무변경(`expect=False` 비활성) / 9/6 산출물 `기한 전`→전부 `정상` / 1월 전년 12월 열 유예 색 제거 / auto 산출물을 `--strict` 로 검증 | PASS(설계) / FAIL ✓ / FAIL ✓ / SKIP(strict 모드) |
+
+주의(6차 유지): `--strict`/`--no-state` 는 같은 파일명에 덮어쓰므로 파괴 실험 기준 파일은 실행별 `--out` 폴더에 둘 것(이번 회차 `out7/<이름>`).
+
+---
+
+## 점검표 양방향 대조 (saero-ad-report-skill `audit/checklist.md` v4.5, 463행 ↔ 이 저장소 v6/6.1, 281행)
+
+| 저쪽(saero)에만 있는 것 | 이쪽(hometax)에만 있는 것 |
+|---|---|
+| 머리말 **2회 커밋 규칙**(last-audit 1차 → 채택 후 checklist 2차) — 이쪽 3·244-247행은 아직 "같은 push 로" | 점검 요청 4줄 붙여넣기 문구(13-20행) |
+| `[의도된 동작 — 결함으로 올리지 마라]` 절(번호 목록) | `[시작 전 확인 ②]` 데이터 최종일 3단계 판정표 · fixtures 교체 금지 |
+| `[되돌리면 안 되는 것]` 표(확인할 것 · 되돌아가면 생기는 일 · 위치) | `[운영 조건]`(실행 빈도·설치본 55행·재업로드) |
+| `[알려진 이월 항목]` 절이 last-audit 를 가리키기만 함(이쪽도 [이월 항목] 절은 같은 원칙인데 머리말 5-11행에 후속 조치 상태를 적어 모순) | A~J 세부 점검 항목(옵션명·등급 6종·config 키 목록·월 경계·J 엣지 목록) |
+| `[수정 회차에 적용할 것]`(같은 개념 두 파일 대조 등) | validate 파괴 실험 **수동** 지시 + 검사별 표 형식 |
+| `[검증 회차 A 동작 / B 의도]` 붙여넣기 문구 | 기준선(last-audit) 형식 절 |
+| 효율 기준선 표 상시화 · 파괴 실험 `tests/mutation_test.py` 이관 · 설치본 매 회차 확인 · 토큰 폐기 · PC push | 월 의존·커플링 항목 재판정 지시 |
+| 다음 회차 구조 변경 계획(파일 분리 registry/updates) · 경쟁사 판정 이력(스킬 고유) | `--as-of` state 백업·복구 지시(F) |
+
+---
+
+## 점검표 개정안 (통합 목록 — 6차 대기 1·3~8 판정 포함)
+
+1. **[대기 1 — 실은 반영됨, 기록 정정]** F 175행이 이미 `--as-of <데이터 연도>-01-05` 다. 11행 "1·3~8번 … 아직 반영하지 않았다" 를 "3~8번" 으로, 버전 줄 3행을 `v6.1 · 2026-09-07(사후 반영 1·2·9·10·11·12)` 로 정정. 머리말 5-11행(후속 조치 상태)은 [이월 항목] 절 원칙("점검표에 적지 않는다")과 모순이므로 삭제하고 last-audit 로 옮긴다.
+2. **[대기 3 — 채택 권고]** B 항목·파괴 실험 표에 "**범위 밖**" 판정 허용. 이번 `ws.title` 이 정확히 그 유형.
+3. **[대기 4 — 폐기 권고]** md5 대조 추가는 12번(최종일 기준)이 대체했다.
+4. **[대기 5 — 채택 권고]** 파괴 실험·`--strict`·`--no-state` 는 실행별 `--out` 폴더(이번 지시가 이미 그렇게 시킴).
+5. **[대기 6 — 채택 시 개선안과 함께]** 3회차 연속 통과 항목(A 옵션 존재 · C 체크섬 · G codeload · G GROUPS 커버리지 · I 경로 존재 · B config 삭제 시 정지)을 `tests/t_audit_static` 하나로 묶고 점검표에서 뺀다. 7차도 전부 통과.
+6. **[대기 7 — 채택 권고]** "validate 검사 전부 파괴" 지시를 "현재 `rec(` 두 번째 인자 고유 이름 기준(정상 요약 18 · 실패 경로 전용 2 포함 20)" 으로.
+7. **[대기 8 — 채택 권고]** D "None 과 빈 문자열" 항목 삭제(4회차 연속 조건 성립 불가). 대신 "매트릭스 헤더를 못 찾는 경로에서 요약 검사 개수가 18 을 유지하는지"(결함 #6) 추가.
+8. **[신규]** A 옵션 목록(126행)에 `--add-vendor` `--ignore-vendor` `--cycle` 추가, B 항목에 config `ignore_suppliers` 추가(문서·코드 참조 두 곳 대조).
+9. **[신규]** 0단계 (2)에 "**직전 후속 조치 표의 문장을 코드와 한 번씩 대조**" 추가(6차 후속 3차 이월). 근거: SKILL.md 243 · push.py 283 의 거짓 문구가 두 회차를 넘어왔다.
+10. **[신규]** F 실측에 `--as-of <연도>-02-05`(2월 경로: 창 2개월, check_grace 등급 건수 신호) 추가. 결함 #1 의 발견 경로.
+11. **[신규]** H 항목 5건(D-day · cycle 경고 · 추가 권장 반영 · 1/1 시작 검사 · 전년 12월)은 전부 구현됐다 → "구현됨, 새 후보만" 으로 축소.
+12. **[신규 — saero 통일]** 머리말·마무리 절을 **2회 커밋 규칙**으로 정정(3행 "같은 push 로", 244-247행 "같은 push.py --code 로", 247 "둘 중 하나만 올리면 어긋난다"). 이번 회차 실제 절차(1차 last-audit 만)와 점검표가 어긋난 상태다.
+13. **[신규 — saero 통일]** `[의도된 동작]` 절 신설 후보: ① 비정기 라벨은 A 경로 면제 안 함 ② 1월 산출물 '기한 전' 0 정상 ③ 점검대상 0곳은 경고 ④ 직전 달 기한 경과 후 유예 검사 비활성 ⑤ 미등록 공급자 제거≠해결 ⑥ dry-run 시 둘 다 지정 `[중단]` rc 0. `[되돌리면 안 되는 것]` 표 후보: until_passed 단일 기준 · listed_ids 가드 · 0건 가드 · check_sheets 개별 SKIP · dry-run 무기록 · ignore_suppliers · codeload · `_scan`. `[수정 회차에 적용할 것]`·`[검증 회차 A/B]` 문구는 skill-audit 프롬프트 ②③ 을 가리키는 한 줄로.
+14. **[신규 — saero 통일]** 효율 기준선 표(1절 형식: 명령·벽시계·도구 호출·즉석 코드 줄·산출값)를 상시 항목으로. 파괴 실험은 부록 스크립트를 `tests/mutation_test.py` 로 이관하는 것을 다음 수정 회차 후보로(개정안 6 의 개수 기준을 스크립트가 세게).
+15. **[신규]** 점검 요청 4줄(13-20행)은 실제 회차 지시(skill-audit 프롬프트 ①)와 다르다 — 4줄을 지우고 "지시는 skill-audit 프롬프트 ① 형식, 이 파일은 절차만" 으로.
+16. **[신규]** 부트스트랩 install/SKILL.md 36-43 · SKILL.md 73-75 의 "last-audit.md 를 함께 읽는다" 는 실사용 회차 도구 호출 5~6회를 쓴다(S3) — 채택 여부와 무관하게 점검표 [운영 조건]에 "실사용 회차가 읽는 파일과 분량" 을 적어 매 회차 재측정.
+
+---
+
+## 점검표 갱신 이력 (checklist.md)
+
+- 6차 2026-09-07 — 첫 이관. 사후에 2·9·10·11·12(+1) 반영, 버전 줄은 "6차" 그대로(개정안 1 로 정정 예정).
+- 7차 2026-09-27 — **미갱신**(진단 회차, 2회 커밋 규칙: 채택 뒤 2차 커밋).
+
+---
+
+## 다음 점검에서 대조할 것
+
+1. **결함 #1(2월 check_grace)** — 2027-02 회차 전에 반드시. 고칠 때 개선안 1(등급 재산출)과 한 회차. 고친 뒤 `--as-of 2026-02-05` 가 FAIL 0 인지, 9/6 산출물 '기한 전'→정상 훼손이 **여전히** FAIL 인지(파괴 실험 재실행).
+2. **결함 #2** 를 (a) 코드 채움으로 고치면 `_one()` 의 `name` 이 `v["name"] or 자료 상호` 가 됐는지 + push.py 283·331 문구, SKILL.md 243 세 곳 grep(`자료에서 채워`).
+3. **결함 #3·#7** 을 고치면 `--add-vendor 999-99-99999 --dry-run` 이 `건너뜀 … 체크섬`, `--ignore-vendor 8693500721 --dry-run` 이 `건너뜀 … 등록돼 있음` 인지. 개선안 2(`t_dry_run_readonly`)와 같은 회차면 그 테스트가 두 케이스를 함께 단언하게.
+4. **결함 #4** 파괴 실험 행 "ws.title 리터럴" 이 FAIL 로 바뀌었는지.
+5. **결함 #6** 매트릭스 헤더 미검출 사본의 요약이 18개인지, 등급 분류 문구가 "결번 표기 미확인" 인지.
+6. **개선안 3** 을 넣으면 첫 실사용 state 커밋이 정렬 변화로 한 번 더 diff 가 큰 것이 정상(그 뒤로는 내용 변화만).
+7. **미실측 이월(5회차째)**: `check_resolved` 상태열만 N>0 실사용 대조.
+8. **P8 [추론] 2건**: 10월 초 실사용에서 9월분 기한(10/10) 임박 문구 · 당월 열 생성 실측.
+9. **개정안 12(2회 커밋)** 이 checklist.md 에 반영됐는지 — 반영 전까지 마무리 절(244-247)은 실제 절차와 다르다.
+10. 이번 회차 실험 사본·산출물(`/home/claude/exp_*`, `out7`, `base7`)은 컨테이너 한정. 다음 회차는 부록 스크립트로 재현한다.
+11. 저장소 커밋이 push 1회당 파일 수만큼 생긴다(6차 후속 4차 7커밋, 3차 4커밋 — Contents API 파일별 PUT). 결함 아님(기록만). 브랜치 push 가 들어오면 `--branch` 와 함께 다중 파일 커밋(Git Data API) 을 검토할지 사용자 결정.
+
+**내가 고를 항목(사용자 채택용 번호)**: 결함 1~10 / 개선안 1~5 / 속도 S1·S2(합격), S3·S4(사용자 결정) / 점검표 개정안 1~16.
+
+### 부록 — validate 파괴 실험 스크립트 원문 (7차, 사본 /home/claude/exp_val 에서 실행)
+
+```python
+"""validate.py 검사별 파괴 실험 (사본 /home/claude/exp_val 에서만)."""
+import os, sys, json, shutil, subprocess, re, copy
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+SB = "/home/claude/exp_val"; OUT = "/home/claude/out7/destroy"; FIX = f"{SB}/tests/fixtures"
+sys.path.insert(0, f"{SB}/scripts")
+from common import load_config, norm_biz
+cfg = load_config()
+S = cfg["sheets"]
+BACKUP = "/home/claude/base7/last-run.backup.json"
+def run(args, cwd=SB):
+    return subprocess.run([sys.executable] + args, cwd=cwd, capture_output=True, text=True)
+def build(name, asof, state_src):
+    d = f"{OUT}/{name}"; os.makedirs(d, exist_ok=True)
+    shutil.copy(state_src, f"{SB}/state/last-run.json")
+    r = run(["scripts/build_report.py", "--uploads", FIX, "--out", d, "--as-of", asof])
+    assert r.returncode == 0, r.stderr
+    x = [f for f in os.listdir(d) if f.endswith(".xlsx")][0]
+    shutil.copy(f"{SB}/state/last-run.json", f"{d}/state.json")
+    return f"{d}/{x}"
+def validate(x, asof, state_src=None, extra=()):
+    if state_src: shutil.copy(state_src, f"{SB}/state/last-run.json")
+    r = run(["scripts/validate.py", x, "--uploads", FIX, "--as-of", asof, *extra])
+    lines = [l for l in r.stdout.splitlines() if l.startswith("[")]
+    summ = re.search(r"FAIL \d+ · SKIP \d+ · PASS \d+", r.stdout)
+    return lines, (summ.group(0) if summ else "요약 없음: " + (r.stderr.strip().splitlines()[-1:] or [""])[0]), r.returncode
+def hdr(ws, must):
+    for r in range(1, 9):
+        m = {str(c.value).strip(): c.column for c in ws[r] if c.value}
+        if all(k in m for k in must): return r, m
+def pick(lines, key):
+    return [l for l in lines if key in l] or ["(해당 검사 줄 없음)"]
+
+# --- 기준 산출물
+base = build("base0927", "2026-09-27", BACKUP)   # state: 3 flagged → after build 9 flagged
+st0927 = f"{OUT}/base0927/state.json"
+jan = build("base0105", "2026-01-05", BACKUP)   # 해결 3
+st0105 = f"{OUT}/base0105/state.json"
+sep06 = build("base0906", "2026-09-06", BACKUP)  # 기한 전 있음
+st0906 = f"{OUT}/base0906/state.json"
+res = []
+def rec(check, how, lines, summ, key):
+    res.append((check, how, " | ".join(pick(lines, key)), summ))
+for nm, x, asof, st in [("base0927", base, "2026-09-27", st0927), ("base0105", jan, "2026-01-05", st0105), ("base0906", sep06, "2026-09-06", st0906)]:
+    l, s, rc = validate(x, asof, st)
+    res.append((f"기준 {nm}", "무변경", s, ""))
+
+def mod(x, name, fn):
+    p = f"{OUT}/{name}.xlsx"; wb = load_workbook(x); fn(wb); wb.save(p); return p
+
+# 1 경로 존재
+os.rename(f"{SB}/README.md", f"{SB}/README.md.bak")
+l, s, _ = validate(base, "2026-09-27", st0927); rec("경로 존재 확인", "README.md 임시 제거", l, s, "경로 존재")
+os.rename(f"{SB}/README.md.bak", f"{SB}/README.md")
+# 2 config 죽은 키
+cp = f"{SB}/config/check-config.json"; orig_cfg = open(cp, encoding="utf-8").read()
+d = json.loads(orig_cfg); d["thresholds"]["zzz_dead"] = 1; open(cp, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2))
+l, s, _ = validate(base, "2026-09-27", st0927); rec("config 죽은 키", "thresholds.zzz_dead 추가", l, s, "죽은 키")
+open(cp, "w", encoding="utf-8").write(orig_cfg)
+# 3 단일 출처 (여러 변형)
+def with_doc_append(path, text, label):
+    p = f"{SB}/{path}"; keep = open(p, encoding="utf-8").read()
+    open(p, "w", encoding="utf-8").write(keep + "\n" + text + "\n")
+    l, s, _ = validate(base, "2026-09-27", st0927); rec("임계값·색상 단일 출처", label, l, s, "단일 출처")
+    open(p, "w", encoding="utf-8").write(keep)
+with_doc_append("README.md", "발급기한은 익월 10일이다.", "README 끝에 '익월 10일' (b-4)")
+with_doc_append("references/excel-format.md", "색은 FFEB9C 다.", "excel-format 끝에 FFEB9C (b-1)")
+with_doc_append("README.md", "12월분은 1/10 까지.", "README 끝에 '1/10' (b-7)")
+with_doc_append("references/judgment-rules.md", "| 매트릭스 | 시트 |", "judgment-rules 에 '| 매트릭스 |' 표 (b-5 문서)")
+def with_code(path, old, new, label):
+    p = f"{SB}/{path}"; keep = open(p, encoding="utf-8").read(); assert old in keep, old
+    open(p, "w", encoding="utf-8").write(keep.replace(old, new, 1))
+    l, s, _ = validate(base, "2026-09-27", st0927); rec("임계값·색상 단일 출처", label, l, s, "단일 출처")
+    open(p, "w", encoding="utf-8").write(keep)
+with_code("scripts/common.py", "for m in range(1, as_of.month + 1)]", "for m in range(1, 10)]", "common.py range(1, 10) (b-3)")
+with_code("scripts/build_report.py", 'f["months_got"] >= th["monthly_min_months"]', 'f["months_got"] >= 6', "build_report monthly_min_months → 6 (b-6)")
+with_code("scripts/build_report.py", 'ws = wb.create_sheet(cfg["sheets"]["missing"])', 'ws = wb.create_sheet("미수취목록")', "build_report create_sheet('미수취목록') (b-5 코드)")
+with_code("scripts/build_report.py", 'ws.title = cfg["sheets"]["matrix"]', 'ws.title = "매트릭스"', "build_report ws.title = '매트릭스' (b-5 범위 밖?)")
+# 4 시트 구성
+p = mod(base, "sheet_renamed", lambda wb: setattr(wb[S["matrix"]], "title", "매트릭수"))
+l, s, _ = validate(p, "2026-09-27", st0927); rec("시트 구성", "시트명 매트릭스→매트릭수", l, s, "시트 구성"); res.append(("  (요약)", "", " | ".join(l), s))
+# 5 매트릭스 헤더 (실패 경로 전용)
+def rename_hdr(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"]); ws.cell(r, m["공급자번호"]).value = "공급자 번호"
+p = mod(base, "matrix_hdr", rename_hdr)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("매트릭스 헤더", "매트릭스 헤더 '공급자번호'→'공급자 번호'", l, s, "매트릭스 헤더"); res.append(("  (요약: 검사 개수 확인)", "", " | ".join(l), s))
+# 6 매트릭스 월 컬럼
+def m9(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"]); ws.cell(r, m["9월"]).value = "9 월"
+p = mod(base, "month_hdr", m9)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("매트릭스 월 컬럼", "헤더 9월→'9 월'", l, s, "매트릭스 월 컬럼")
+# 7 매트릭스 셀 검사 (실패 경로 전용) — 월 헤더 전부 제거
+def nomonths(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"])
+    for k, c in m.items():
+        if k.endswith("월"): ws.cell(r, c).value = k.replace("월", "M")
+p = mod(base, "no_month_cols", nomonths)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("매트릭스 셀 검사", "월 헤더 전부 '1M'… 로 (월 컬럼 0개)", l, s, "매트릭스 셀 검사"); res.append(("  (요약)", "", " | ".join(l), s))
+# 8 미수취=공란
+yellow = PatternFill("solid", fgColor=cfg["colors"]["cancelled"])
+def blank_yellow(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"])
+    for i in range(r+1, ws.max_row+1):
+        c = ws.cell(i, m["2월"])
+        if c.value is None: c.fill = yellow; return
+p = mod(base, "blank_yellow", blank_yellow)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("미수취=공란 검사", "공란 한 칸에 취소색", l, s, "미수취=공란")
+def blank_space(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"])
+    for i in range(r+1, ws.max_row+1):
+        c = ws.cell(i, m["2월"])
+        if c.value is None: c.value = " "; return
+p = mod(base, "blank_space", blank_space)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("미수취=공란 검사 (' ')", "공란 한 칸에 ' ' 문자", l, s, "월별 합 대사"); res.append(("  (같은 파일 미수취=공란 줄)", "", " | ".join(pick(l, "미수취=공란")), s))
+# 9 전액취소
+def zero_noyellow(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"])
+    for row in ws.iter_rows(min_row=r+1):
+        for c in row:
+            if c.value == 0 and c.column >= 4: c.fill = PatternFill(fill_type=None); return
+p = mod(base, "zero_noyellow", zero_noyellow)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("전액취소=0+노랑 검사", "0 칸 노랑 제거", l, s, "전액취소")
+# 10 점검 대상 누락
+def del_target(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "대상"])
+    for i in range(r+1, ws.max_row+1):
+        if ws.cell(i, m["대상"]).value == "점검대상": ws.delete_rows(i); return
+p = mod(base, "del_target", del_target)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("점검 대상 누락 검사", "매트릭스 점검대상 1행 삭제", l, s, "점검 대상 누락")
+# 11 합계 대사
+def net_plus(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "순공급가액"]); ws.cell(r+1, m["순공급가액"]).value += 1
+p = mod(base, "net_plus", net_plus)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("합계 대사", "순공급가액 +1", l, s, "합계 대사")
+def net_space(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "순공급가액"]); ws.cell(r+1, m["순공급가액"]).value = " "
+p = mod(base, "net_space", net_space)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("합계 대사 (' ')", "순공급가액 칸에 ' '", l, s, "합계 대사")
+# 12 월별 합
+def swap15(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"])
+    for i in range(r+1, ws.max_row+1):
+        a, b = ws.cell(i, m["1월"]).value, ws.cell(i, m["5월"]).value
+        if a and b and a != b:
+            ws.cell(i, m["1월"]).value, ws.cell(i, m["5월"]).value = b, a; return
+p = mod(base, "swap15", swap15)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("월별 합 대사", "한 행의 1월↔5월 교환(총합 유지)", l, s, "월별 합 대사")
+# 13 원본 행수
+p = mod(base, "raw_del", lambda wb: wb[S["raw"]].delete_rows(wb[S["raw"]].max_row))
+l, s, _ = validate(p, "2026-09-27", st0927); rec("원본 행수", "원본정제 마지막 행 삭제", l, s, "원본 행수")
+# 14 승인번호 중복
+def dup_appr(wb):
+    ws = wb[S["raw"]]; r, m = hdr(ws, ["승인번호"]); ws.cell(3, m["승인번호"]).value = ws.cell(2, m["승인번호"]).value
+p = mod(base, "dup_appr", dup_appr)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("승인번호 중복", "승인번호 1건 복제", l, s, "승인번호 중복")
+# 15 상계 매칭
+def unpair(wb):
+    ws = wb[S["raw"]]; r, m = hdr(ws, ["상계처리"])
+    for i in range(r+1, ws.max_row+1):
+        if str(ws.cell(i, m["상계처리"]).value).startswith("취소분"): ws.cell(i, m["상계처리"]).value = "-"; return
+p = mod(base, "unpair", unpair)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("상계 매칭", "'취소분(상계)' 1건 → '-'", l, s, "상계 매칭")
+# 16 대상외
+def unl_vendor(wb):
+    ws = wb[S["unlisted"]]; r, m = hdr(ws, ["공급자번호", "추가 권장"]); ws.cell(r+1, m["공급자번호"]).value = "119-86-87135"
+p = mod(base, "unl_vendor", unl_vendor)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("대상외공급자 시트", "시트 공급자번호를 vendors 것(바로고)으로", l, s, "대상외공급자")
+# 17 등급 분류
+def bad_grade(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"]); ws.cell(r+1, m["등급"]).value = "이상등급"
+p = mod(base, "bad_grade", bad_grade)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 분류", "등급값 '이상등급'", l, s, "등급 분류")
+def gap_has_value(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급", "누락된 월"])
+    for i in range(r+1, ws.max_row+1):
+        if ws.cell(i, m["등급"]).value == "확인 필요" and ws.cell(i, m["누락된 월"]).value == "8월":
+            ws.cell(i, m["누락된 월"]).value = "1월"; return
+p = mod(base, "gap_value", gap_has_value)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 분류", "확인 필요 행 결번월 8월→값 있는 1월", l, s, "등급 분류")
+def unsorted(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"]); ws.cell(r+1, m["등급"]).value = "정상"
+p = mod(base, "unsorted", unsorted)
+l, s, _ = validate(p, "2026-09-27", st0927); rec("등급 분류", "첫 행 등급을 '정상' 으로(정렬 뒤집힘)", l, s, "등급 분류")
+# 18 실행 이력 비교
+st = json.load(open(st0927, encoding="utf-8")); st2 = copy.deepcopy(st); st2["flagged"] = st2["flagged"][:1]
+tmp = f"{OUT}/state_1.json"; json.dump(st2, open(tmp, "w", encoding="utf-8"), ensure_ascii=False)
+l, s, _ = validate(base, "2026-09-27", tmp); rec("실행 이력 비교", "state flagged 9→1", l, s, "실행 이력 비교")
+# 19 해결 집계 (1월 산출물, 해결 3)
+def clear_status(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급", "상태"])
+    for i in range(r+1, ws.max_row+1):
+        if ws.cell(i, m["등급"]).value == "해결": ws.cell(i, m["상태"]).value = None; return
+p = mod(jan, "jan_clear_status", clear_status)
+l, s, _ = validate(p, "2026-01-05", BACKUP); rec("해결 집계", "1월 산출물 해결 행의 상태 비움 (state=3곳 이력)", l, s, "해결 집계")
+l, s, _ = validate(p, "2026-01-05", BACKUP); res.append(("  (같은 파일 실행 이력 비교 줄)", "", " | ".join(pick(l, "실행 이력")), s))
+# 20 발급기한 유예
+l, s, _ = validate(base, "2026-09-27", st0927); rec("발급기한 유예 (9/27 기준)", "무변경 — 8월분 기한(9/10) 지나 expect=False", l, s, "발급기한 유예")
+def all_normal(wb):
+    ws = wb[S["missing"]]; r, m = hdr(ws, ["등급"])
+    for i in range(r+1, ws.max_row+1):
+        if ws.cell(i, m["등급"]).value == "기한 전": ws.cell(i, m["등급"]).value = "정상"
+p = mod(sep06, "sep06_all_normal", all_normal)
+l, s, _ = validate(p, "2026-09-06", st0906); rec("발급기한 유예 (9/6 산출물)", "'기한 전' 전부 → '정상'", l, s, "발급기한 유예")
+def strip_grace(wb):
+    ws = wb[S["matrix"]]; r, m = hdr(ws, ["공급자번호", "상호"])
+    for i in range(r+1, ws.max_row+1): ws.cell(i, m["전년 12월"]).fill = PatternFill(fill_type=None)
+p = mod(jan, "jan_strip_grace", strip_grace)
+l, s, _ = validate(p, "2026-01-05", BACKUP); rec("발급기한 유예 (1월 산출물)", "전년 12월 열 유예 색 전부 제거", l, s, "발급기한 유예")
+l, s, _ = validate(base, "2026-09-27", st0927, extra=["--strict"]); rec("발급기한 유예 (--strict 검증)", "auto 산출물을 --strict 로 검증", l, s, "발급기한 유예")
+
+shutil.copy(BACKUP, f"{SB}/state/last-run.json")
+print("| 검사 | 파괴 방법 | 결과 줄 | 요약 |"); print("|---|---|---|---|")
+for c, h, r, s in res:
+    print(f"| {c} | {h} | {r[:150]} | {s} |")
+```
+
+---
+
+## 이전 기록 (6차 정기점검 + 후속 조치 1~4차, 2026-09-07 — 원문 보존)
+
+# 점검 기준선
+
 > **6차 정기점검 (2026-09-07).** 진단 시점에는 고치지 않았고, 같은 날 저녁
 > 사용자 승인 후 결함 10건·개선안 4건을 처리했다 — 아래 "6차 후속 조치" 참조.
 > 이월이었던 #15 · #18 · 개선안 4 도 같은 날 심야에 종결 — "6차 후속 2차" 참조.
