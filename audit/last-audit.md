@@ -1,3 +1,30 @@
+## 7차 검증·병합 기록 (2026-09-27)
+
+> 검증 회차(별도 세션)는 브랜치 `fix-20260927`(`0500967`)을 실물로 대조했고, 이 절은 병합 회차가 적는다. 아래 "7차 수정 기록"·"7차 정기점검 진단 기준선" 절은 그대로 둔다.
+
+- **검증 1 결과**: 재현 실패 **0** · 브랜치 `0500967` · 전문 `hometax-invoice-check_검증_2026-09-27.md`(사용자 폴더). 확인 범위: 수정 기록 항목 0~14 실물(파일·줄·원문) · 5개 실행(9/27 기본 · `--strict --no-state` · `--as-of 2026-01-05` · `2026-02-05` · `2026-09-06`) validate 요약·등급별·콘솔 `!` 줄·결과 집합 · 부록 파괴 실험 30회 + 등급 재산출 4회 전부 FAIL 유지 · dry-run 4케이스(네트워크 차단, config md5 불변, rc 0) · `--branch` 스텁 5시나리오(원격 미접촉, PUT 0) · 역검증 `t_dry_run_readonly`(가드 제거 시 FAIL, 복구 시 통과) · 의도 검증(B) 6건 + 부록 교체 전부 진단 의도와 맞음. **검증 2: 없음**(수정 회차 2 불필요).
+- **병합**: 커밋 `90aceeadba841d7bee0ff5484cba8cf735d1de6d` · parents 2개(no-ff: `3780abd` + `0500967`) · 2026-09-27 14:43:14 KST (05:43:14Z) · 방법 GitHub Merges API(`POST /repos/…/merges`, base main ← head fix-20260927, 브랜치 push 가 아닌 서버 측 병합). 브랜치 `fix-20260927` 잔존(삭제 안 함). 병합 직전 `git ls-remote`: main `3780abd` · fix `0500967` 확인.
+- **병합 후 재수령 대조**(`sync.py` main): 변경 9파일 md5 = 브랜치와 동일(push.py `6bec801b…` · validate.py `184d9796…` · build_report.py `2e45c213…` · check_input.py `46c9531e…` · SKILL.md `72a9a316…` · checklist.md `bf04a35d…` · last-audit.md `2de200ad…`(이 절 추가 전) · judgment-rules.md `66b12e9a…` · test_edge_cases.py `a5233ba6…`) / 불변: state `46f8542a…` · vendors.json `3f68fea6…` · check-config.json `cacd9692…` · install/SKILL.md `6f686b57…`.
+- **병합된 main 재실행**(사본, state 백업·복구, 한 실행당 build_report 1회, 실행별 `--out`):
+
+| 실행 | validate 요약 | 등급별 | `!` 줄 |
+|---|---|---|---|
+| tests/test_edge_cases.py | 26 t_ · 112 체크 · 실패 0 · exit 0 · 49s · state 불변 | | |
+| 9/27 기본 | FAIL 0 · SKIP 1 · PASS 18 | 확인 필요 9 · 기한 전 0 · 단발 3 · 정상 6 · 해결 0 | 9 |
+| `--strict --no-state` | FAIL 0 · SKIP 3 · PASS 16 | 9·0·3·6·0 | 9 |
+| `--as-of 2026-01-05`(check_input FAIL 1 = fixtures 한계, 세 명령 따로) | FAIL 0 · SKIP 2 · PASS 17 | 0·0·0·0·해결 3 | 0 |
+| `--as-of 2026-02-05` | FAIL 0 · SKIP 1 · PASS 18 | 0·0·0·0·해결 3 | 0 |
+| `--as-of 2026-09-06` | FAIL 0 · SKIP 1 · PASS 18 | 확인 필요 3 · 기한 전 6 · 단발 1 · 정상 3 · 해결 0 | 3 |
+
+  9/27 결과 집합: 튜플 22(확인 필요 9 · 단발 3 · 정상 6 · 거래 종료 4) · 월별 합 9개월 동일(1월 53,992,788 … 8월 63,848,349 · 9월 0) · state 순서 9곳 동일(2648135761 … 8693500721) = 수정 기록 "속도·효율" 절 값. 끝에 `__pycache__` 삭제.
+- **부트스트랩 재업로드**: 불필요(`install/SKILL.md` 불변, md5 `6f686b57…`).
+- **기록 보완(검증 §14)**: 부록 파괴 실험 표에 한 줄 — 매트릭스 셀 검사(월 컬럼 0개) 사본 요약 **18개**(`FAIL 4 · SKIP 1 · PASS 13`) — 새 검사 +1(진단 때 17).
+- **이월 목록**: 개선안 3(state `flagged` biz_no 정렬) · 4(`state.run_date > as_of` 경고) · 5(FAIL 산출물 파일명) / S3(`audit/OPEN.md` 또는 last-audit 상단 요약 절 + view 범위) · S4(정상 회차 dry-run 관행) / "다음 점검에서 대조할 것" 11(Git Data API 단일 커밋) / 점검표 개정안 5·14후반(`tests/t_audit_static` · `tests/mutation_test.py` 이관) / 새로 본 것 2건(`push._scan` 이 `__pycache__`·`.pyc` 를 안 거름 → 다음 진단 회차 결함 후보 · `check_cycle` WARN 문구의 상호 빈칸) / 미실측 `check_resolved` 상태열만 N>0 실사용 대조(5회차째).
+- **첫 실사용에서 볼 것(10월 초)**: 콘솔 `  ! ` 줄만으로 채팅 요약이 나오는지(즉석 openpyxl 0줄) / validate 요약 19개, '기한 전' 기대 = 시트 / 9월분 기한 2026-10-10 임박 문구 · 당월(10월) 열 생성(P8 [추론] 2건 실측) / `--branch` 없는 일반 push(state 만)가 main 으로 가는지 / 실 데이터 최종일 기록.
+- **다음 회차 첫 확인**: main = 병합 커밋 `90aceeadba841d7bee0ff5484cba8cf735d1de6d`(+ 이 기록 커밋) · 브랜치 `fix-20260927` 잔존 · checklist.md 버전 줄 `v7 · 2026-09-27`.
+
+---
+
 # 7차 수정 기록 (2026-09-27 · 브랜치 `fix-20260927` · 진단과 같은 세션)
 
 > 사용자 지시(프롬프트 ②)로 **결함 1~10 · 개선안 1·2 · 속도 S1·S2 · 점검표 개정안 1·2·4·6~16(3 폐기, 5·14후반 계획)** 을 고쳤다.
