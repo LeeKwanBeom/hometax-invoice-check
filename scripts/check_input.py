@@ -249,7 +249,7 @@ def check_vendors(vendors, df):
 
     # 이미 until/since 로 짝지어 처리한 쌍은 다시 경고하지 않는다.
     # 처리를 끝낸 건이 매 회차 올라오면 사용자가 WARN 자체를 안 보게 된다.
-    vmap = {v["biz_no"]: v for v in vendors}
+    vmap = {norm_biz(v["biz_no"]): v for v in vendors}   # alias 쪽 sid 와 같은 정규화(7차 #10)
     def _paired(ids):
         got_until = any(vmap.get(i, {}).get("until") for i in ids)
         got_since = any(vmap.get(i, {}).get("since") for i in ids)
